@@ -22,8 +22,9 @@ sensor.battery_health_analyzer_discovered_devices
 ```
 
 The sensor state is the number of discovered battery devices. Its diagnostic
-attributes show the selected source entities and discovery issues. All of its
-attributes are excluded from Recorder.
+attributes show the selected source entities, discovery issues and the exact
+candidate entity IDs behind any ambiguous selection. All of its attributes are
+excluded from Recorder.
 
 ## Planned architecture
 
@@ -43,4 +44,3 @@ python -m compileall custom_components tests
 ## Compatibility target
 
 Home Assistant 2026.9 or newer.
-

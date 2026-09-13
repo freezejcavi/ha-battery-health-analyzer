@@ -58,6 +58,9 @@ class BatteryHealthDiscoverySensor(
         devices = self.coordinator.data
         return {
             "with_voltage": sum(device.has_voltage for device in devices),
+            "missing_voltage": sum(
+                "missing_voltage" in device.issues for device in devices
+            ),
             "ambiguous": sum(device.is_ambiguous for device in devices),
             "devices": [device.as_dict() for device in devices],
         }

@@ -102,7 +102,8 @@ def _voltage_score(entity: EntityDescriptor) -> int | None:
         + 25 * has_voltage_unit
         + 20 * ends_voltage
     )
-    if any(token in text for token in ("mains_voltage", "input_voltage", "output_voltage")):
+    excluded_voltage_names = ("mains_voltage", "input_voltage", "output_voltage")
+    if any(token in text for token in excluded_voltage_names):
         score -= 100
     return score
 
@@ -159,19 +160,25 @@ def discover_battery_devices(
         outage = _select_best(device_entities, _outage_score)
 
         issues: list[str] = []
+        ambiguous_candidates: list[tuple[str, tuple[str, ...]]] = []
         if battery.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_BATTERY)
+            ambiguous_candidates.append(("battery", battery.tied_entity_ids))
         if battery_low.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_BATTERY_LOW)
+            ambiguous_candidates.append(("battery_low", battery_low.tied_entity_ids))
         if voltage.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_VOLTAGE)
+            ambiguous_candidates.append(("voltage", voltage.tied_entity_ids))
         if last_seen.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_LAST_SEEN)
+            ambiguous_candidates.append(("last_seen", last_seen.tied_entity_ids))
         if outage.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_OUTAGE)
-        if battery.entity_id is None:
+            ambiguous_candidates.append(("outage", outage.tied_entity_ids))
+        if battery.entity_id is None and not battery.tied_entity_ids:
             issues.append(ISSUE_MISSING_BATTERY_PERCENT)
-        if voltage.entity_id is None:
+        if voltage.entity_id is None and not voltage.tied_entity_ids:
             issues.append(ISSUE_MISSING_VOLTAGE)
 
         discovered.append(
@@ -184,6 +191,7 @@ def discover_battery_devices(
                 last_seen_entity_id=last_seen.entity_id,
                 outage_entity_id=outage.entity_id,
                 issues=tuple(issues),
+                ambiguous_candidates=tuple(ambiguous_candidates),
             )
         )
 
@@ -191,4 +199,3 @@ def discover_battery_devices(
         discovered,
         key=lambda device: ((device.device_name or "").lower(), device.device_id),
     )
-

@@ -101,8 +101,28 @@ class DiscoveryTests(unittest.TestCase):
         )
 
         self.assertIsNone(result[0].voltage_entity_id)
-        self.assertIn("ambiguous_voltage", result[0].issues)
-        self.assertIn("missing_voltage", result[0].issues)
+        self.assertEqual(result[0].issues, ("ambiguous_voltage",))
+        self.assertEqual(
+            result[0].ambiguous_candidates,
+            (
+                (
+                    "voltage",
+                    (
+                        "sensor.device_a_battery_voltage",
+                        "sensor.device_b_battery_voltage",
+                    ),
+                ),
+            ),
+        )
+        self.assertEqual(
+            result[0].as_dict()["ambiguous_candidates"],
+            {
+                "voltage": [
+                    "sensor.device_a_battery_voltage",
+                    "sensor.device_b_battery_voltage",
+                ]
+            },
+        )
 
     def test_disabled_sources_are_ignored(self) -> None:
         result = discover_battery_devices(
@@ -157,4 +177,3 @@ class DiscoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

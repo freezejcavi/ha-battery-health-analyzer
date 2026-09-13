@@ -39,6 +39,7 @@ class DiscoveredBatteryDevice:
     last_seen_entity_id: str | None
     outage_entity_id: str | None
     issues: tuple[str, ...] = ()
+    ambiguous_candidates: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def has_voltage(self) -> bool:
@@ -52,7 +53,7 @@ class DiscoveredBatteryDevice:
 
     def as_dict(self) -> dict[str, Any]:
         """Return a stable diagnostics representation."""
-        return {
+        result = {
             "device_id": self.device_id,
             "device_name": self.device_name,
             "battery_entity_id": self.battery_entity_id,
@@ -62,4 +63,9 @@ class DiscoveredBatteryDevice:
             "outage_entity_id": self.outage_entity_id,
             "issues": list(self.issues),
         }
-
+        if self.ambiguous_candidates:
+            result["ambiguous_candidates"] = {
+                role: list(entity_ids)
+                for role, entity_ids in self.ambiguous_candidates
+            }
+        return result
