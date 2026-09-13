@@ -166,6 +166,32 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIsNone(result[0].voltage_entity_id)
         self.assertEqual(result[0].issues, ("missing_voltage",))
 
+    def test_actuator_voltage_sensors_are_not_battery_candidates(self) -> None:
+        result = discover_battery_devices(
+            [
+                entity("sensor.radiator_battery", device_class="battery", unit="%"),
+                entity(
+                    "sensor.radiator_valve_closing_limit_voltage",
+                    device_class="voltage",
+                    unit="V",
+                ),
+                entity(
+                    "sensor.radiator_valve_motor_running_voltage",
+                    device_class="voltage",
+                    unit="V",
+                ),
+                entity(
+                    "sensor.radiator_valve_opening_limit_voltage",
+                    device_class="voltage",
+                    unit="V",
+                ),
+            ]
+        )
+
+        self.assertIsNone(result[0].voltage_entity_id)
+        self.assertEqual(result[0].issues, ("missing_voltage",))
+        self.assertEqual(result[0].ambiguous_candidates, ())
+
     def test_binary_low_battery_only_device_is_discovered(self) -> None:
         result = discover_battery_devices(
             [

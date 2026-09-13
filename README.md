@@ -26,8 +26,10 @@ attributes show the selected source entities, discovery issues and the exact
 candidate entity IDs behind any ambiguous selection. All of its attributes are
 excluded from Recorder.
 
-Voltage discovery uses the stable entity ID as its fallback, so temporarily
-unavailable sleeping devices do not disappear from the pairing result.
+Voltage discovery uses the stable sibling entity-ID base as its fallback, so
+temporarily unavailable sleeping devices do not disappear from the pairing
+result and unrelated actuator voltage diagnostics are not mistaken for battery
+voltage.
 
 ## Planned architecture
 

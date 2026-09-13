@@ -81,24 +81,51 @@ def _battery_low_score(entity: EntityDescriptor) -> int | None:
     return 100 * is_battery_class + 50 * has_low_name
 
 
-def _voltage_score(entity: EntityDescriptor) -> int | None:
+def _source_base(
+    battery: _Selection, battery_low: _Selection
+) -> str | None:
+    """Return the stable object-id base shared by sibling source entities."""
+    candidates = (
+        (
+            battery.entity_id,
+            ("_battery_percentage", "_battery_percent", "_battery_level", "_battery"),
+        ),
+        (battery_low.entity_id, ("_battery_low", "_low_battery")),
+    )
+    for entity_id, suffixes in candidates:
+        if entity_id is None:
+            continue
+        object_id = entity_id.partition(".")[2]
+        for suffix in suffixes:
+            if object_id.endswith(suffix):
+                return object_id[: -len(suffix)]
+    return None
+
+
+def _voltage_score(
+    entity: EntityDescriptor, source_base: str | None
+) -> int | None:
     if entity.domain != "sensor":
         return None
 
     text = entity.searchable_name
+    object_id = entity.entity_id.partition(".")[2]
     is_voltage_class = entity.device_class == "voltage"
     has_voltage_unit = entity.unit in {"V", "mV", "v", "mv"}
     has_battery_voltage = "battery_voltage" in text
     ends_voltage = entity.entity_id.endswith("_voltage")
+    voltage_base = object_id.removesuffix("_voltage") if ends_voltage else None
+    is_sibling_voltage = source_base is not None and voltage_base == source_base
     excluded_voltage_names = ("mains_voltage", "input_voltage", "output_voltage")
 
     if any(token in text for token in excluded_voltage_names):
         return None
-    if not has_battery_voltage and not ends_voltage:
+    if not has_battery_voltage and not is_sibling_voltage:
         return None
 
     score = (
-        140 * has_battery_voltage
+        300 * has_battery_voltage
+        + 220 * is_sibling_voltage
         + 40 * is_voltage_class
         + 25 * has_voltage_unit
         + 20 * ends_voltage
@@ -153,7 +180,11 @@ def discover_battery_devices(
         ):
             continue
 
-        voltage = _select_best(device_entities, _voltage_score)
+        source_base = _source_base(battery, battery_low)
+        voltage = _select_best(
+            device_entities,
+            lambda entity: _voltage_score(entity, source_base),
+        )
         last_seen = _select_best(device_entities, _last_seen_score)
         outage = _select_best(device_entities, _outage_score)
 
