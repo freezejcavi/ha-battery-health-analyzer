@@ -1,0 +1,15 @@
+{
+  "title": "Battery Health Analyzer",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nastavit Battery Health Analyzer",
+        "description": "Vytvoří jednu read-only discovery instanci. Zdrojové entity ani zařízení se nezmění."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Battery Health Analyzer je již nastavený."
+    }
+  }
+}
+

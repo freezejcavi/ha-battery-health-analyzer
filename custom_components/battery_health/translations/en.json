@@ -1,0 +1,15 @@
+{
+  "title": "Battery Health Analyzer",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Battery Health Analyzer",
+        "description": "Create one read-only discovery instance. No source entity or device will be changed."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Battery Health Analyzer is already configured."
+    }
+  }
+}
+

@@ -1,0 +1,13 @@
+[project]
+name = "ha-battery-health-analyzer"
+version = "0.1.0.dev0"
+description = "Battery health analysis for Home Assistant"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
