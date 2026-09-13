@@ -140,6 +140,32 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIsNone(result[0].voltage_entity_id)
         self.assertEqual(result[0].issues, ("missing_voltage",))
 
+    def test_voltage_is_discovered_without_live_state_metadata(self) -> None:
+        result = discover_battery_devices(
+            [
+                entity("sensor.device_battery", device_class="battery", unit="%"),
+                entity("sensor.device_voltage"),
+            ]
+        )
+
+        self.assertEqual(result[0].voltage_entity_id, "sensor.device_voltage")
+        self.assertEqual(result[0].issues, ())
+
+    def test_mains_voltage_is_not_used_as_battery_voltage(self) -> None:
+        result = discover_battery_devices(
+            [
+                entity("sensor.device_battery", device_class="battery", unit="%"),
+                entity(
+                    "sensor.device_mains_voltage",
+                    device_class="voltage",
+                    unit="V",
+                ),
+            ]
+        )
+
+        self.assertIsNone(result[0].voltage_entity_id)
+        self.assertEqual(result[0].issues, ("missing_voltage",))
+
     def test_binary_low_battery_only_device_is_discovered(self) -> None:
         result = discover_battery_devices(
             [

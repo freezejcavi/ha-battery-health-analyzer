@@ -26,6 +26,9 @@ attributes show the selected source entities, discovery issues and the exact
 candidate entity IDs behind any ambiguous selection. All of its attributes are
 excluded from Recorder.
 
+Voltage discovery uses the stable entity ID as its fallback, so temporarily
+unavailable sleeping devices do not disappear from the pairing result.
+
 ## Planned architecture
 
 1. Discover battery entities and pair related sources on the same HA device.

@@ -90,10 +90,11 @@ def _voltage_score(entity: EntityDescriptor) -> int | None:
     has_voltage_unit = entity.unit in {"V", "mV", "v", "mv"}
     has_battery_voltage = "battery_voltage" in text
     ends_voltage = entity.entity_id.endswith("_voltage")
+    excluded_voltage_names = ("mains_voltage", "input_voltage", "output_voltage")
 
-    if not has_battery_voltage and not (
-        ends_voltage and (is_voltage_class or has_voltage_unit)
-    ):
+    if any(token in text for token in excluded_voltage_names):
+        return None
+    if not has_battery_voltage and not ends_voltage:
         return None
 
     score = (
@@ -102,9 +103,6 @@ def _voltage_score(entity: EntityDescriptor) -> int | None:
         + 25 * has_voltage_unit
         + 20 * ends_voltage
     )
-    excluded_voltage_names = ("mains_voltage", "input_voltage", "output_voltage")
-    if any(token in text for token in excluded_voltage_names):
-        score -= 100
     return score
 
 
