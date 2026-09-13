@@ -50,17 +50,40 @@ class BatteryHealthDiscoverySensor(
     @property
     def native_value(self) -> int:
         """Return the number of discovered battery devices."""
-        return len(self.coordinator.data)
+        return len(self.coordinator.data.devices)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return source pairing details for the read-only PoC."""
-        devices = self.coordinator.data
+        snapshot = self.coordinator.data
+        devices = snapshot.devices
+        device_diagnostics: list[dict[str, Any]] = []
+        for device in devices:
+            diagnostics = device.as_dict()
+            if device.voltage_entity_id is not None:
+                history_summary = snapshot.voltage_history.get(
+                    device.voltage_entity_id
+                )
+                diagnostics["voltage_history"] = (
+                    history_summary.as_dict()
+                    if history_summary is not None
+                    else None
+                )
+            device_diagnostics.append(diagnostics)
+
         return {
             "with_voltage": sum(device.has_voltage for device in devices),
             "missing_voltage": sum(
                 "missing_voltage" in device.issues for device in devices
             ),
             "ambiguous": sum(device.is_ambiguous for device in devices),
-            "devices": [device.as_dict() for device in devices],
+            "history_with_median": sum(
+                summary.median_mv is not None
+                for summary in snapshot.voltage_history.values()
+            ),
+            "history_without_median": sum(
+                summary.median_mv is None
+                for summary in snapshot.voltage_history.values()
+            ),
+            "devices": device_diagnostics,
         }

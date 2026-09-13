@@ -6,11 +6,12 @@ the reported battery percentage alone.
 
 ## Development status
 
-This repository is in the first read-only proof-of-concept phase. It discovers
-battery-powered Home Assistant devices and pairs their battery percentage,
-battery voltage, `last_seen`, binary low-battery and power-outage entities.
+This repository is in a read-only proof-of-concept phase. It discovers
+battery-powered Home Assistant devices, pairs their source entities and reads
+all selected voltage histories from Recorder in one 24-hour batch operation.
 
-It does **not** calculate health or replace the current dashboard logic yet.
+It calculates a diagnostic time-weighted voltage median and coverage, but does
+**not** expose health verdicts or replace the current dashboard logic yet.
 
 ## Current proof of concept
 
@@ -23,8 +24,9 @@ sensor.battery_health_analyzer_discovered_devices
 
 The sensor state is the number of discovered battery devices. Its diagnostic
 attributes show the selected source entities, discovery issues and the exact
-candidate entity IDs behind any ambiguous selection. All of its attributes are
-excluded from Recorder.
+candidate entity IDs behind any ambiguous selection. For each selected voltage
+source, `voltage_history` contains `median_24h_mv`, valid-time coverage and a
+compact status. All diagnostic attributes are excluded from Recorder.
 
 Voltage discovery uses the stable sibling entity-ID base as its fallback, so
 temporarily unavailable sleeping devices do not disappear from the pairing
@@ -34,8 +36,8 @@ voltage.
 ## Planned architecture
 
 1. Discover battery entities and pair related sources on the same HA device.
-2. Read 24 hours of voltage history in one Recorder batch operation.
-3. Calculate a time-weighted median and compare it with a learned baseline.
+2. Read 24 hours of voltage history in one Recorder batch operation. ✅ PoC
+3. Compare the time-weighted median with a learned baseline.
 4. Expose `ok`, `weakening`, `replace`, or `unknown` per device.
 5. Persist only the compact baseline and battery-cycle state.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 
@@ -69,3 +70,50 @@ class DiscoveredBatteryDevice:
                 for role, entity_ids in self.ambiguous_candidates
             }
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class VoltageHistoryPoint:
+    """One voltage state transition used by the pure statistics engine."""
+
+    timestamp: datetime
+    voltage_mv: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class VoltageHistorySummary:
+    """Compact result of one entity's Recorder window analysis."""
+
+    median_mv: float | None
+    coverage_ratio: float
+    valid_duration_seconds: float
+    source_points: int
+    latest_voltage_mv: float | None
+    issue: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return rounded diagnostics suitable for an HA state attribute."""
+        return {
+            "median_24h_mv": (
+                round(self.median_mv) if self.median_mv is not None else None
+            ),
+            "coverage_ratio": round(self.coverage_ratio, 3),
+            "valid_duration_hours": round(
+                self.valid_duration_seconds / 3600, 2
+            ),
+            "source_points": self.source_points,
+            "latest_voltage_mv": (
+                round(self.latest_voltage_mv)
+                if self.latest_voltage_mv is not None
+                else None
+            ),
+            "issue": self.issue,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BatteryHealthSnapshot:
+    """One coordinated discovery and Recorder analysis snapshot."""
+
+    devices: tuple[DiscoveredBatteryDevice, ...]
+    voltage_history: dict[str, VoltageHistorySummary]
