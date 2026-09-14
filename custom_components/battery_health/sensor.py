@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
+from .cycle import assess_cycle_integrity
 from .evidence import build_evidence_model, classify_voltage_information
 
 
@@ -61,6 +62,12 @@ class BatteryHealthDiscoverySensor(
         devices = snapshot.devices
         device_diagnostics: list[dict[str, Any]] = []
         evidence_readiness = {"ready": 0, "limited": 0, "blocked": 0}
+        cycle_integrity_counts = {
+            "stable": 0,
+            "possible_boundary": 0,
+            "probable_boundary": 0,
+            "insufficient": 0,
+        }
 
         for device in devices:
             diagnostics = device.as_dict()
@@ -139,16 +146,20 @@ class BatteryHealthDiscoverySensor(
                 profile.as_dict() if profile is not None else None
             )
 
+            battery_daily = {}
             voltage_daily = {}
             long_term = self.coordinator._long_term_history
-            if (
-                long_term is not None
-                and device.voltage_entity_id is not None
-            ):
-                voltage_daily = long_term.voltage_daily.get(
-                    device.voltage_entity_id,
-                    {},
-                )
+            if long_term is not None:
+                if device.battery_entity_id is not None:
+                    battery_daily = long_term.battery_daily.get(
+                        device.battery_entity_id,
+                        {},
+                    )
+                if device.voltage_entity_id is not None:
+                    voltage_daily = long_term.voltage_daily.get(
+                        device.voltage_entity_id,
+                        {},
+                    )
             voltage_information = classify_voltage_information(voltage_daily)
 
             if profile is not None:
@@ -165,6 +176,18 @@ class BatteryHealthDiscoverySensor(
                     evidence_readiness[evidence_model.decision_readiness] += 1
             else:
                 diagnostics["evidence_model"] = None
+
+            cycle_integrity = assess_cycle_integrity(
+                battery_daily,
+                voltage_daily,
+                battery_history,
+                voltage_history,
+                voltage_information,
+                freshness.state if freshness is not None else None,
+            )
+            diagnostics["cycle_integrity"] = cycle_integrity.as_dict()
+            if cycle_integrity.state in cycle_integrity_counts:
+                cycle_integrity_counts[cycle_integrity.state] += 1
 
             device_diagnostics.append(diagnostics)
 
@@ -213,5 +236,6 @@ class BatteryHealthDiscoverySensor(
                 for evidence in operability.outages.values()
             ),
             "evidence_readiness": evidence_readiness,
+            "cycle_integrity": cycle_integrity_counts,
             "devices": device_diagnostics,
         }
