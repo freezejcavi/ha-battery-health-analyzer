@@ -28,6 +28,22 @@ def parse_battery_percent(value: str | float | None) -> float | None:
     return numeric_value
 
 
+def select_battery_percent(
+    current_value: str | float | None,
+    recorder_values: list[str | float],
+) -> tuple[float | None, str]:
+    """Use Recorder only when the live state does not exist during startup."""
+    if current_value is not None:
+        if (current := parse_battery_percent(current_value)) is not None:
+            return current, "current"
+        return None, "unavailable"
+    if recorder_values and (
+        recorded := parse_battery_percent(recorder_values[-1])
+    ) is not None:
+        return recorded, "recorder"
+    return None, "unavailable"
+
+
 def baseline_confidence(record: BaselineRecord) -> float:
     """Return confidence from 0.5 after one 24h window to 1.0 after 48h."""
     qualified_hours = max(

@@ -8,11 +8,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .baseline import learn_baseline, parse_battery_percent
+from .baseline import learn_baseline
 from .const import ANALYSIS_INTERVAL, DOMAIN
 from .ha_discovery import async_discover_battery_devices
 from .models import BaselineLearningResult, BatteryHealthSnapshot
-from .recorder import async_get_voltage_history
+from .recorder import async_get_recorder_history
 from .storage import BaselineStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,26 +43,39 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             for device in devices
             if device.voltage_entity_id is not None
         )
+        battery_entity_ids = sorted(
+            device.battery_entity_id
+            for device in devices
+            if device.battery_entity_id is not None
+        )
         observed_at = dt_util.utcnow()
-        voltage_history = await async_get_voltage_history(
+        recorder_history = await async_get_recorder_history(
             self.hass,
             voltage_entity_ids,
+            battery_entity_ids,
             observed_at,
         )
+        voltage_history = recorder_history.voltage_history
         battery_percent: dict[str, float | None] = {}
+        battery_percent_source: dict[str, str] = {}
         baseline_learning: dict[str, BaselineLearningResult] = {}
         baseline_changed = False
 
         for device in devices:
-            battery_state = (
-                self.hass.states.get(device.battery_entity_id)
+            percentage = (
+                recorder_history.battery_percent.get(device.battery_entity_id)
                 if device.battery_entity_id is not None
                 else None
             )
-            percentage = parse_battery_percent(
-                battery_state.state if battery_state is not None else None
-            )
             battery_percent[device.device_id] = percentage
+            battery_percent_source[device.device_id] = (
+                recorder_history.battery_percent_source.get(
+                    device.battery_entity_id,
+                    "unavailable",
+                )
+                if device.battery_entity_id is not None
+                else "unavailable"
+            )
             history_summary = (
                 voltage_history.get(device.voltage_entity_id)
                 if device.voltage_entity_id is not None
@@ -88,5 +101,6 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             devices=devices,
             voltage_history=voltage_history,
             battery_percent=battery_percent,
+            battery_percent_source=battery_percent_source,
             baseline_learning=baseline_learning,
         )

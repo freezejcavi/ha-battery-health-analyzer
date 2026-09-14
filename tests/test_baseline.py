@@ -9,6 +9,7 @@ from custom_components.battery_health.baseline import (
     baseline_confidence,
     learn_baseline,
     parse_battery_percent,
+    select_battery_percent,
 )
 from custom_components.battery_health.models import (
     BaselineRecord,
@@ -48,6 +49,30 @@ class BaselineLearningTests(unittest.TestCase):
         self.assertEqual(parse_battery_percent("80"), 80)
         self.assertIsNone(parse_battery_percent("unknown"))
         self.assertIsNone(parse_battery_percent(101))
+
+    def test_live_percentage_has_priority_over_recorder(self) -> None:
+        self.assertEqual(
+            select_battery_percent("85", [70, 80]),
+            (85, "current"),
+        )
+
+    def test_recorder_percentage_is_used_when_live_state_is_absent(self) -> None:
+        self.assertEqual(
+            select_battery_percent(None, [70, 80]),
+            (80, "recorder"),
+        )
+
+    def test_unavailable_live_state_blocks_recorder_fallback(self) -> None:
+        self.assertEqual(
+            select_battery_percent("unavailable", [70, 80]),
+            (None, "unavailable"),
+        )
+
+    def test_trailing_unavailable_recorder_state_is_not_skipped(self) -> None:
+        self.assertEqual(
+            select_battery_percent(None, [80, "unavailable"]),
+            (None, "unavailable"),
+        )
 
     def test_starts_baseline_from_healthy_well_covered_window(self) -> None:
         result = learn_baseline(None, history(3050), 90, NOW)

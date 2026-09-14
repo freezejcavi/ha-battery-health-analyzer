@@ -63,6 +63,9 @@ class BatteryHealthDiscoverySensor(
             diagnostics["battery_percent_now"] = snapshot.battery_percent.get(
                 device.device_id
             )
+            diagnostics["battery_percent_source"] = (
+                snapshot.battery_percent_source.get(device.device_id)
+            )
             if device.voltage_entity_id is not None:
                 history_summary = snapshot.voltage_history.get(
                     device.voltage_entity_id

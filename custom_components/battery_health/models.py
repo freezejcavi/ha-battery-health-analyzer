@@ -114,6 +114,15 @@ class VoltageHistorySummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RecorderHistorySnapshot:
+    """Combined result of one voltage and battery Recorder query."""
+
+    voltage_history: dict[str, VoltageHistorySummary]
+    battery_percent: dict[str, float | None]
+    battery_percent_source: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class BaselineRecord:
     """Persistent healthy-voltage baseline for one HA device."""
 
@@ -178,4 +187,5 @@ class BatteryHealthSnapshot:
     devices: tuple[DiscoveredBatteryDevice, ...]
     voltage_history: dict[str, VoltageHistorySummary]
     battery_percent: dict[str, float | None]
+    battery_percent_source: dict[str, str]
     baseline_learning: dict[str, BaselineLearningResult]

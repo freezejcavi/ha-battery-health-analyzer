@@ -36,6 +36,11 @@ at least 80%. A learned baseline can rise but never automatically fall with a
 weakening battery. The diagnostic output exposes the learning state and
 confidence; it does not produce a health verdict yet.
 
+Battery percentage uses the current HA state when it exists. During startup,
+the latest state from the same batch Recorder query is used only when the live
+state is absent. An existing or trailing `unknown`/`unavailable` state is never
+skipped.
+
 Voltage discovery uses the stable sibling entity-ID base as its fallback, so
 temporarily unavailable sleeping devices do not disappear from the pairing
 result and unrelated actuator voltage diagnostics are not mistaken for battery
