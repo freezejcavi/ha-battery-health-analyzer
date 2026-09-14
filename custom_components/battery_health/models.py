@@ -114,8 +114,68 @@ class VoltageHistorySummary:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineRecord:
+    """Persistent healthy-voltage baseline for one HA device."""
+
+    baseline_mv: float
+    first_qualified_at: datetime
+    last_qualified_at: datetime
+    sample_count: int
+    battery_cycle: int = 1
+
+    def as_storage_dict(self) -> dict[str, Any]:
+        """Serialize the record for Home Assistant Store."""
+        return {
+            "baseline_mv": self.baseline_mv,
+            "first_qualified_at": self.first_qualified_at.isoformat(),
+            "last_qualified_at": self.last_qualified_at.isoformat(),
+            "sample_count": self.sample_count,
+            "battery_cycle": self.battery_cycle,
+        }
+
+    @classmethod
+    def from_storage_dict(cls, data: dict[str, Any]) -> BaselineRecord:
+        """Deserialize and validate one stored baseline record."""
+        return cls(
+            baseline_mv=float(data["baseline_mv"]),
+            first_qualified_at=datetime.fromisoformat(data["first_qualified_at"]),
+            last_qualified_at=datetime.fromisoformat(data["last_qualified_at"]),
+            sample_count=int(data["sample_count"]),
+            battery_cycle=int(data.get("battery_cycle", 1)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineLearningResult:
+    """Diagnostic outcome of one baseline-learning evaluation."""
+
+    record: BaselineRecord | None
+    state: str
+    confidence: float
+    changed: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return compact diagnostics for the HA entity."""
+        return {
+            "baseline_mv": (
+                round(self.record.baseline_mv) if self.record is not None else None
+            ),
+            "confidence": round(self.confidence, 3),
+            "sample_count": (
+                self.record.sample_count if self.record is not None else 0
+            ),
+            "battery_cycle": (
+                self.record.battery_cycle if self.record is not None else None
+            ),
+            "learning_state": self.state,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BatteryHealthSnapshot:
     """One coordinated discovery and Recorder analysis snapshot."""
 
     devices: tuple[DiscoveredBatteryDevice, ...]
     voltage_history: dict[str, VoltageHistorySummary]
+    battery_percent: dict[str, float | None]
+    baseline_learning: dict[str, BaselineLearningResult]

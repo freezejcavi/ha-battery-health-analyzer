@@ -11,7 +11,7 @@ battery-powered Home Assistant devices, pairs their source entities and reads
 all selected voltage histories from Recorder in one 24-hour batch operation.
 
 It calculates a diagnostic time-weighted voltage median and coverage, but does
-**not** expose health verdicts or replace the current dashboard logic yet.
+not yet expose health verdicts or replace the current dashboard logic.
 
 ## Current proof of concept
 
@@ -30,6 +30,12 @@ compact status. Historical state attributes provide the source unit, with the
 current state used only as a fallback. All diagnostic attributes are excluded
 from Recorder.
 
+The baseline PoC persists one compact record per device. It starts learning
+only from a window with at least 75% coverage and a current battery report of
+at least 80%. A learned baseline can rise but never automatically fall with a
+weakening battery. The diagnostic output exposes the learning state and
+confidence; it does not produce a health verdict yet.
+
 Voltage discovery uses the stable sibling entity-ID base as its fallback, so
 temporarily unavailable sleeping devices do not disappear from the pairing
 result and unrelated actuator voltage diagnostics are not mistaken for battery
@@ -39,7 +45,7 @@ voltage.
 
 1. Discover battery entities and pair related sources on the same HA device.
 2. Read 24 hours of voltage history in one Recorder batch operation. ✅ PoC
-3. Compare the time-weighted median with a learned baseline.
+3. Learn and persist a guarded per-device healthy baseline. ✅ PoC
 4. Expose `ok`, `weakening`, `replace`, or `unknown` per device.
 5. Persist only the compact baseline and battery-cycle state.
 

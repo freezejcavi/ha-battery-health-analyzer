@@ -60,6 +60,9 @@ class BatteryHealthDiscoverySensor(
         device_diagnostics: list[dict[str, Any]] = []
         for device in devices:
             diagnostics = device.as_dict()
+            diagnostics["battery_percent_now"] = snapshot.battery_percent.get(
+                device.device_id
+            )
             if device.voltage_entity_id is not None:
                 history_summary = snapshot.voltage_history.get(
                     device.voltage_entity_id
@@ -69,6 +72,12 @@ class BatteryHealthDiscoverySensor(
                     if history_summary is not None
                     else None
                 )
+            learning_result = snapshot.baseline_learning.get(device.device_id)
+            diagnostics["baseline"] = (
+                learning_result.as_dict()
+                if learning_result is not None
+                else None
+            )
             device_diagnostics.append(diagnostics)
 
         return {
@@ -84,6 +93,10 @@ class BatteryHealthDiscoverySensor(
             "history_without_median": sum(
                 summary.median_mv is None
                 for summary in snapshot.voltage_history.values()
+            ),
+            "baseline_available": sum(
+                result.record is not None
+                for result in snapshot.baseline_learning.values()
             ),
             "devices": device_diagnostics,
         }
