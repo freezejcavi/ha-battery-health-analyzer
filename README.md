@@ -12,9 +12,9 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.14`**
+**Current development version: `0.1.0-dev.15`**
 
-The repository is in a read-only telemetry and evidence-profiling phase.
+The repository is in a read-only telemetry and evidence-routing phase.
 Discovery starts from Home Assistant Entity Registry entries whose `platform`
 is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
 `power_outage_count` and an optional safe same-device temperature source.
@@ -28,6 +28,52 @@ live-learning model and additionally publishes freshness immediately when a
 `last_seen` state changes, without triggering the expensive Recorder/profiler
 refresh. Learned cadence may use the rolling 7-day Store while `reports_24h`
 remains strictly bounded to the previous 24 hours.
+
+Dev15 adds a read-only Evidence Routing Model. It does **not** score battery
+health. Instead it decides how telemetry channels may be used later: freshness
+acts as a gate, battery and voltage are de-duplicated when strongly coupled,
+voltage is classified as `continuous`, `quantized`, `static` or `insufficient`,
+and outage data remains supporting evidence only.
+
+## Evidence routing
+
+Each discovered device now exposes an `evidence_model` diagnostic block. The
+model answers questions such as:
+
+- is operability evidence open, limited or blocked by freshness;
+- should battery percentage be interpreted as a level, trend or robust upper
+  envelope;
+- does voltage carry continuous information, only coarse quantized levels, or
+  effectively no changing information;
+- are battery percentage and voltage independent condition channels or the same
+  underlying signal;
+- is temperature context required/relevant/optional;
+- is `power_outage_count` neutral or supporting an instability escalation.
+
+Example shape:
+
+```text
+evidence_model:
+  freshness_gate: open
+  decision_readiness: ready
+  condition_channels:
+    independent_count: 1
+    double_count_guard: true
+  battery:
+    role: shared
+    processing: upper_envelope
+  voltage:
+    role: shared
+    information:
+      type: continuous
+      confidence: 1.0
+  battery_voltage_topology: shared
+  temperature_context: optional
+  outage_role: unavailable
+```
+
+`decision_readiness` means only that the evidence channels are sufficiently
+understood to permit a later health decision. It is **not** a health verdict.
 
 ## Freshness and outage evidence
 
@@ -145,10 +191,10 @@ never skipped.
 1. Limit source discovery to Entity Registry platform `mqtt`. ✅ dev10
 2. Discover and safely pair MQTT battery telemetry on the same HA device. ✅
 3. Read and profile 24h / 7d / 30d battery and voltage telemetry. ✅ dev9
-4. Add adaptive `last_seen` freshness evidence. 🧪 dev11-dev14
-5. Add reset-aware 24h `power_outage_count` evidence. 🧪 dev11
-6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices.
-7. Build the evidence/confidence model from validated telemetry channels.
+4. Add adaptive `last_seen` freshness evidence. ✅ dev11-dev14
+5. Add reset-aware 24h `power_outage_count` evidence. ✅ dev11
+6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices. ✅ dev14
+7. Build and validate the evidence-routing model. 🧪 dev15
 8. Re-design guarded baseline learning from validated evidence.
 9. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 

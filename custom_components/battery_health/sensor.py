@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
+from .evidence import build_evidence_model, classify_voltage_information
 
 
 async def async_setup_entry(
@@ -59,6 +60,7 @@ class BatteryHealthDiscoverySensor(
         operability = self.coordinator.operability
         devices = snapshot.devices
         device_diagnostics: list[dict[str, Any]] = []
+        evidence_readiness = {"ready": 0, "limited": 0, "blocked": 0}
 
         for device in devices:
             diagnostics = device.as_dict()
@@ -69,20 +71,24 @@ class BatteryHealthDiscoverySensor(
                 snapshot.battery_percent_source.get(device.device_id)
             )
 
+            battery_history = (
+                snapshot.battery_history.get(device.battery_entity_id)
+                if device.battery_entity_id is not None
+                else None
+            )
             if device.battery_entity_id is not None:
-                battery_history = snapshot.battery_history.get(
-                    device.battery_entity_id
-                )
                 diagnostics["battery_history"] = (
                     battery_history.as_dict()
                     if battery_history is not None
                     else None
                 )
 
+            voltage_history = (
+                snapshot.voltage_history.get(device.voltage_entity_id)
+                if device.voltage_entity_id is not None
+                else None
+            )
             if device.voltage_entity_id is not None:
-                voltage_history = snapshot.voltage_history.get(
-                    device.voltage_entity_id
-                )
                 diagnostics["voltage_history"] = (
                     voltage_history.as_dict()
                     if voltage_history is not None
@@ -132,6 +138,34 @@ class BatteryHealthDiscoverySensor(
             diagnostics["telemetry_profile"] = (
                 profile.as_dict() if profile is not None else None
             )
+
+            voltage_daily = {}
+            long_term = self.coordinator._long_term_history
+            if (
+                long_term is not None
+                and device.voltage_entity_id is not None
+            ):
+                voltage_daily = long_term.voltage_daily.get(
+                    device.voltage_entity_id,
+                    {},
+                )
+            voltage_information = classify_voltage_information(voltage_daily)
+
+            if profile is not None:
+                evidence_model = build_evidence_model(
+                    profile,
+                    battery_history,
+                    voltage_history,
+                    freshness,
+                    outage,
+                    voltage_information,
+                )
+                diagnostics["evidence_model"] = evidence_model.as_dict()
+                if evidence_model.decision_readiness in evidence_readiness:
+                    evidence_readiness[evidence_model.decision_readiness] += 1
+            else:
+                diagnostics["evidence_model"] = None
+
             device_diagnostics.append(diagnostics)
 
         freshness_states = (
@@ -178,5 +212,6 @@ class BatteryHealthDiscoverySensor(
                 evidence.events_24h or 0
                 for evidence in operability.outages.values()
             ),
+            "evidence_readiness": evidence_readiness,
             "devices": device_diagnostics,
         }
