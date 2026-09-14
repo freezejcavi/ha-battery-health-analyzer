@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import partial
-from datetime import datetime, timedelta
 
 from homeassistant.components.recorder import get_instance, history
 from homeassistant.core import HomeAssistant, State
@@ -99,16 +99,13 @@ async def async_get_operability_history(
 
     outages = {}
     for entity_id in outage_entity_ids:
-        states = list(states_by_entity.get(entity_id, []))
+        states = states_by_entity.get(entity_id, [])
         current_state = hass.states.get(entity_id)
         latest_count = (
             parse_outage_count(current_state.state)
             if current_state is not None
             else None
         )
-        if current_state is not None:
-            states.append(current_state)
-
         points = [
             OutageHistoryPoint(
                 timestamp=state.last_changed,
