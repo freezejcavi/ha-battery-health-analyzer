@@ -1,7 +1,9 @@
 """Tests for freshness and outage evidence."""
 
-from datetime import UTC, datetime, timedelta
+from __future__ import annotations
+
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from custom_components.battery_health.operability import (
     ISSUE_FUTURE_LAST_SEEN,
@@ -16,6 +18,8 @@ from custom_components.battery_health.operability import (
 
 
 class OperabilityTests(unittest.TestCase):
+    """Verify conservative freshness and outage calculations."""
+
     def setUp(self) -> None:
         self.end = datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
         self.start = self.end - timedelta(hours=24)
@@ -29,9 +33,15 @@ class OperabilityTests(unittest.TestCase):
         self.assertIsNone(parse_outage_count("14.5"))
 
     def test_freshness_uses_device_specific_cadence(self) -> None:
-        reports = [self.end - timedelta(hours=value) for value in (5, 4, 3, 2, 1)]
+        reports = [
+            self.end - timedelta(hours=value)
+            for value in (5, 4, 3, 2, 1)
+        ]
         result = summarize_freshness(
-            reports, self.end - timedelta(minutes=20), self.end, self.start
+            reports,
+            self.end - timedelta(minutes=20),
+            self.end,
+            self.start,
         )
         self.assertEqual(result.state, "fresh")
         self.assertEqual(result.reports_24h, 6)
@@ -43,10 +53,16 @@ class OperabilityTests(unittest.TestCase):
             for value in range(12, 2, -1)
         ]
         late = summarize_freshness(
-            reports, self.end - timedelta(hours=2), self.end, self.start
+            reports,
+            self.end - timedelta(hours=2),
+            self.end,
+            self.start,
         )
         stale = summarize_freshness(
-            reports, self.end - timedelta(hours=4), self.end, self.start
+            reports,
+            self.end - timedelta(hours=4),
+            self.end,
+            self.start,
         )
         self.assertEqual(late.state, "late")
         self.assertEqual(stale.state, "stale")
@@ -60,7 +76,10 @@ class OperabilityTests(unittest.TestCase):
         )
         self.assertEqual(insufficient.issue, ISSUE_INSUFFICIENT_CADENCE)
         future = summarize_freshness(
-            [], self.end + timedelta(minutes=10), self.end, self.start
+            [],
+            self.end + timedelta(minutes=10),
+            self.end,
+            self.start,
         )
         self.assertEqual(future.issue, ISSUE_FUTURE_LAST_SEEN)
 
@@ -88,7 +107,10 @@ class OperabilityTests(unittest.TestCase):
         )
         self.assertEqual(partial.issue, ISSUE_PARTIAL_OUTAGE_WINDOW)
         unsupported = summarize_outage_history(
-            [], self.start, self.end, supported=False
+            [],
+            self.start,
+            self.end,
+            supported=False,
         )
         self.assertFalse(unsupported.supported)
         self.assertIsNone(unsupported.events_24h)
