@@ -5,14 +5,14 @@ from __future__ import annotations
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .discovery import discover_battery_devices
+from .discovery import discover_battery_devices, is_supported_platform
 from .models import DiscoveredBatteryDevice, EntityDescriptor
 
 
 def async_discover_battery_devices(
     hass: HomeAssistant,
 ) -> list[DiscoveredBatteryDevice]:
-    """Build a read-only battery discovery snapshot from HA registries and states."""
+    """Build a read-only MQTT battery snapshot from HA registries and states."""
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
 
@@ -20,7 +20,10 @@ def async_discover_battery_devices(
     device_names: dict[str, str | None] = {}
 
     for registry_entry in entity_registry.entities.values():
-        if registry_entry.device_id is None:
+        if (
+            registry_entry.device_id is None
+            or not is_supported_platform(registry_entry.platform)
+        ):
             continue
 
         device_entry = device_registry.async_get(registry_entry.device_id)
@@ -54,4 +57,3 @@ def async_discover_battery_devices(
         )
 
     return discover_battery_devices(descriptors, device_names)
-
