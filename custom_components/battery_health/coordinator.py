@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .baseline import learn_baseline
+from .cadence_store import CadenceStore
 from .const import ANALYSIS_INTERVAL, DOMAIN
 from .ha_discovery import async_discover_battery_devices
 from .models import (
@@ -17,7 +19,7 @@ from .models import (
     LongTermHistorySnapshot,
     TelemetryProfile,
 )
-from .operability import OperabilitySnapshot
+from .operability import OperabilitySnapshot, parse_last_seen
 from .operability_recorder import async_get_operability_history
 from .profiler import build_telemetry_profile
 from .recorder import (
@@ -41,15 +43,73 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             update_interval=ANALYSIS_INTERVAL,
         )
         self._baseline_store = BaselineStore(hass)
+        self._cadence_store = CadenceStore(hass)
         self._long_term_history: LongTermHistorySnapshot | None = None
+        self._last_seen_unsub = None
+        self._last_seen_entity_to_device: dict[str, str] = {}
         self.operability = OperabilitySnapshot({}, {})
 
     async def async_initialize(self) -> None:
         """Load existing persistent state before the first refresh."""
         await self._baseline_store.async_load()
+        await self._cadence_store.async_load()
+
+    @callback
+    def _async_handle_last_seen_change(
+        self,
+        event: Event[EventStateChangedData],
+    ) -> None:
+        """Learn one live last_seen sample without touching Recorder."""
+        device_id = self._last_seen_entity_to_device.get(event.data["entity_id"])
+        new_state = event.data["new_state"]
+        if device_id is None or new_state is None:
+            return
+        timestamp = parse_last_seen(new_state.state)
+        if timestamp is None:
+            return
+        self._cadence_store.observe(device_id, timestamp)
+
+    @callback
+    def _ensure_last_seen_tracking(self, devices, observed_at) -> None:
+        """Track the current discovered last_seen entity set."""
+        mapping = {
+            device.last_seen_entity_id: device.device_id
+            for device in devices
+            if device.last_seen_entity_id is not None
+        }
+        if mapping == self._last_seen_entity_to_device:
+            return
+
+        if self._last_seen_unsub is not None:
+            self._last_seen_unsub()
+            self._last_seen_unsub = None
+
+        self._last_seen_entity_to_device = mapping
+        if mapping:
+            self._last_seen_unsub = async_track_state_change_event(
+                self.hass,
+                list(mapping),
+                self._async_handle_last_seen_change,
+            )
+
+        # Seed with any valid live values already available at registration time.
+        for entity_id, device_id in mapping.items():
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            timestamp = parse_last_seen(state.state)
+            if timestamp is not None:
+                self._cadence_store.observe(device_id, timestamp, observed_at)
+
+    async def async_shutdown(self) -> None:
+        """Stop live tracking and flush compact cadence state."""
+        if self._last_seen_unsub is not None:
+            self._last_seen_unsub()
+            self._last_seen_unsub = None
+        await self._cadence_store.async_save()
 
     async def _async_update_data(self) -> BatteryHealthSnapshot:
-        """Return one read-only telemetry snapshot without Store writes."""
+        """Return one read-only telemetry snapshot without baseline Store writes."""
         devices = tuple(async_discover_battery_devices(self.hass))
         voltage_entity_ids = sorted(
             device.voltage_entity_id
@@ -77,6 +137,16 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             if device.outage_entity_id is not None
         )
         observed_at = dt_util.utcnow()
+        self._ensure_last_seen_tracking(devices, observed_at)
+
+        cadence_timestamps = {
+            device.last_seen_entity_id: self._cadence_store.timestamps(
+                device.device_id,
+                observed_at,
+            )
+            for device in devices
+            if device.last_seen_entity_id is not None
+        }
 
         recorder_history = await async_get_recorder_history(
             self.hass,
@@ -89,6 +159,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             last_seen_entity_ids,
             outage_entity_ids,
             observed_at,
+            cadence_timestamps=cadence_timestamps,
         )
         if self._long_term_history is None:
             self._long_term_history = await async_get_long_term_history(

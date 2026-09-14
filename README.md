@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.12`**
+**Current development version: `0.1.0-dev.13`**
 
 The repository is in a read-only telemetry and evidence-profiling phase.
 Discovery starts from Home Assistant Entity Registry entries whose `platform`
@@ -21,12 +21,14 @@ is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
 
 There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
 
-Dev12 hardens `last_seen` startup handling: a valid live timestamp is preferred,
-otherwise the latest valid Recorder timestamp is used. The operability Recorder
-query requests full state changes so report-cadence learning is not dependent on
-Home Assistant's significant-change filtering.
+Dev13 changes `last_seen` cadence learning after real Home Assistant validation
+showed that Recorder exposed only one usable timestamp state in 24 hours while
+the live MQTT timestamp updated correctly. Freshness now learns prospectively
+from live HA state-change events and keeps a compact rolling cadence Store keyed
+by stable HA device ID. Recorder is no longer the primary cadence source; it
+remains the 24-hour history source for `power_outage_count`.
 
-## Dev11 freshness and outage evidence
+## Freshness and outage evidence
 
 The diagnostic sensor is:
 
@@ -34,32 +36,38 @@ The diagnostic sensor is:
 sensor.battery_health_analyzer_discovered_devices
 ```
 
-Dev11 turns the previously discovered `last_seen` and `power_outage_count`
-entities into read-only evidence instead of exposing only their entity IDs.
-
 `last_seen` is treated as an operability/freshness gate, not as proof of a
 healthy battery. Diagnostics expose the current age plus device-specific report
-cadence learned from the previous 24 hours:
+cadence learned from live timestamp changes:
 
 ```text
 freshness:
   supported: true
-  age_minutes: 1.0
-  reports_24h: 18
-  median_gap_minutes: 67.0
-  p90_gap_minutes: 103.0
-  age_to_p90_ratio: 0.01
+  last_seen: 2026-09-14T11:42:09+00:00
+  source: current
+  age_minutes: 22.2
+  reports_24h: 8
+  cadence_samples: 7
+  median_gap_minutes: 66.0
+  p90_gap_minutes: 102.0
+  age_to_p90_ratio: 0.22
   state: fresh
 ```
 
 There is deliberately no universal one- or two-hour stale threshold. When at
 least three cadence gaps are available, the current age is compared with that
-device's p90 reporting gap. Dev11 exposes `fresh`, `late`, `stale`,
-`insufficient`, `invalid` or `unavailable` for diagnostics only; these states do
-not yet change battery health.
+device's p90 reporting gap. Until enough live samples are learned, freshness is
+`insufficient`; this is expected after first installation and does not imply a
+battery problem.
+
+The live cadence Store keeps at most 512 timestamps per device with a 7-day
+retention window and uses delayed writes to avoid unnecessary storage churn.
+On integration unload the compact Store is flushed immediately. A valid live
+`last_seen` value is preferred; if live state is temporarily unavailable, the
+latest learned Store timestamp can be used as a fallback.
 
 `power_outage_count` is optional and its absolute value is not health evidence.
-Dev11 evaluates only reset-aware positive deltas during the previous 24 hours:
+Only reset-aware positive deltas during the previous 24 hours are evaluated:
 
 ```text
 power_outage:
@@ -73,11 +81,6 @@ power_outage:
 A missing outage counter is neutral. Counter decreases are counted as resets,
 not negative outages. Positive deltas are supporting instability evidence only;
 no outage count can independently produce a future `replace` verdict.
-
-For isolation during validation, dev11 currently reads `last_seen` and outage
-counters in one additional lightweight 24-hour Recorder batch every 30 minutes.
-This is intentionally separate from the existing battery/voltage batch until
-real-device behavior is validated; consolidation is a later optimization.
 
 ## MQTT scope
 
@@ -139,15 +142,16 @@ never skipped.
 1. Limit source discovery to Entity Registry platform `mqtt`. ✅ dev10
 2. Discover and safely pair MQTT battery telemetry on the same HA device. ✅
 3. Read and profile 24h / 7d / 30d battery and voltage telemetry. ✅ dev9
-4. Add adaptive `last_seen` freshness evidence. 🧪 dev11/dev12
+4. Add adaptive `last_seen` freshness evidence. 🧪 dev11-dev13
 5. Add reset-aware 24h `power_outage_count` evidence. 🧪 dev11
-6. Validate operability evidence on real Zigbee2MQTT devices.
+6. Validate live-learned cadence on real Zigbee2MQTT devices.
 7. Build the evidence/confidence model from validated telemetry channels.
 8. Re-design guarded baseline learning from validated evidence.
 9. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 
-Daily aggregates are intentionally not persisted yet. That optimization is
-deferred until the profiling and evidence logic have been validated.
+Daily profiler aggregates are intentionally not persisted yet. Cadence samples
+are persisted separately because real validation showed that Recorder is not a
+reliable source of `last_seen` report cadence in this environment.
 
 ## Local verification
 
