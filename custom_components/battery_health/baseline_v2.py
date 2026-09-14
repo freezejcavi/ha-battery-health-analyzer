@@ -103,6 +103,28 @@ def _persisted_boundary(
     return battery_ok and voltage_ok
 
 
+def _latest_boundary_cluster(
+    candidates: list[tuple[int, str, str]],
+) -> tuple[int, str, str] | None:
+    """Collapse consecutive detections from one physical replacement event."""
+    if not candidates:
+        return None
+    clusters: list[list[tuple[int, str, str]]] = []
+    for candidate in candidates:
+        if not clusters or candidate[0] - clusters[-1][-1][0] > 2:
+            clusters.append([candidate])
+        else:
+            clusters[-1].append(candidate)
+    cluster = clusters[-1]
+    first_index, first_day, _ = cluster[0]
+    kind = (
+        "probable_boundary"
+        if any(item[2] == "probable_boundary" for item in cluster)
+        else "possible_boundary"
+    )
+    return first_index, first_day, kind
+
+
 def segment_current_cycle(
     battery_daily: Mapping[str, BatteryHistorySummary],
     voltage_daily: Mapping[str, VoltageHistorySummary],
@@ -125,8 +147,7 @@ def segment_current_cycle(
             ("current_24h_boundary",),
         )
 
-    probable: tuple[int, str] | None = None
-    possible: tuple[int, str] | None = None
+    candidates: list[tuple[int, str, str]] = []
     for index in range(3, len(days) - 1):
         day = days[index]
         previous = days[max(0, index - 7):index]
@@ -140,18 +161,13 @@ def segment_current_cycle(
         )
         if result.state not in {"probable_boundary", "possible_boundary"}:
             continue
-        if not _persisted_boundary(result, days[index + 1], battery_daily, voltage_daily):
-            continue
-        if result.state == "probable_boundary":
-            probable = (index, day)
-        else:
-            possible = (index, day)
+        if _persisted_boundary(result, days[index + 1], battery_daily, voltage_daily):
+            candidates.append((index, day, result.state))
 
-    found = probable or possible
+    found = _latest_boundary_cluster(candidates)
     if found is None:
         return CycleSegment("left_censored", None, None, False, tuple(days), 0, ("no_boundary_detected_in_window",))
-    index, boundary_date = found
-    kind = "probable_boundary" if probable == found else "possible_boundary"
+    index, boundary_date, kind = found
     if kind == "possible_boundary":
         return CycleSegment(
             "possible_boundary", kind, boundary_date, False, (), total,
