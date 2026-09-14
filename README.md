@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.13`**
+**Current development version: `0.1.0-dev.14`**
 
 The repository is in a read-only telemetry and evidence-profiling phase.
 Discovery starts from Home Assistant Entity Registry entries whose `platform`
@@ -21,12 +21,13 @@ is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
 
 There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
 
-Dev13 changes `last_seen` cadence learning after real Home Assistant validation
-showed that Recorder exposed only one usable timestamp state in 24 hours while
-the live MQTT timestamp updated correctly. Freshness now learns prospectively
-from live HA state-change events and keeps a compact rolling cadence Store keyed
-by stable HA device ID. Recorder is no longer the primary cadence source; it
-remains the 24-hour history source for `power_outage_count`.
+Dev13 moved `last_seen` cadence learning away from Recorder after real Home
+Assistant validation showed that timestamp history exposed only one usable state
+in 24 hours while the live MQTT timestamp updated correctly. Dev14 keeps that
+live-learning model and additionally publishes freshness immediately when a
+`last_seen` state changes, without triggering the expensive Recorder/profiler
+refresh. Learned cadence may use the rolling 7-day Store while `reports_24h`
+remains strictly bounded to the previous 24 hours.
 
 ## Freshness and outage evidence
 
@@ -64,7 +65,9 @@ The live cadence Store keeps at most 512 timestamps per device with a 7-day
 retention window and uses delayed writes to avoid unnecessary storage churn.
 On integration unload the compact Store is flushed immediately. A valid live
 `last_seen` value is preferred; if live state is temporarily unavailable, the
-latest learned Store timestamp can be used as a fallback.
+latest learned Store timestamp can be used as a fallback. Live `last_seen`
+changes update only the freshness evidence and diagnostic entity; they do not
+launch a full 24h/30d analysis cycle.
 
 `power_outage_count` is optional and its absolute value is not health evidence.
 Only reset-aware positive deltas during the previous 24 hours are evaluated:
@@ -142,9 +145,9 @@ never skipped.
 1. Limit source discovery to Entity Registry platform `mqtt`. ✅ dev10
 2. Discover and safely pair MQTT battery telemetry on the same HA device. ✅
 3. Read and profile 24h / 7d / 30d battery and voltage telemetry. ✅ dev9
-4. Add adaptive `last_seen` freshness evidence. 🧪 dev11-dev13
+4. Add adaptive `last_seen` freshness evidence. 🧪 dev11-dev14
 5. Add reset-aware 24h `power_outage_count` evidence. 🧪 dev11
-6. Validate live-learned cadence on real Zigbee2MQTT devices.
+6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices.
 7. Build the evidence/confidence model from validated telemetry channels.
 8. Re-design guarded baseline learning from validated evidence.
 9. Expose `ok`, `weakening`, `replace` or `unknown` per device.

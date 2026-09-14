@@ -17,7 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     from .coordinator import BatteryHealthCoordinator
 
-    coordinator = BatteryHealthCoordinator(hass)
+    coordinator = BatteryHealthCoordinator(hass, entry)
     await coordinator.async_initialize()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
@@ -27,10 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload Battery Health Analyzer and flush compact live cadence state."""
+    """Unload Battery Health Analyzer platforms."""
     from homeassistant.const import Platform
 
-    unloaded = await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
-    if unloaded:
-        await entry.runtime_data.async_shutdown()
-    return unloaded
+    return await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])

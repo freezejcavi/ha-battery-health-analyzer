@@ -60,6 +60,22 @@ class OperabilityTests(unittest.TestCase):
         self.assertAlmostEqual(result.p90_gap_seconds, 3600)
         self.assertLess(result.age_to_p90_ratio, 1)
 
+    def test_freshness_uses_older_cadence_but_reports_24h_is_bounded(self) -> None:
+        reports = [
+            self.end - timedelta(hours=value)
+            for value in (96, 72, 48, 24)
+        ]
+        result = summarize_freshness(
+            reports,
+            self.end - timedelta(hours=1),
+            self.end,
+            self.start,
+        )
+        self.assertEqual(result.state, "fresh")
+        self.assertEqual(result.reports_24h, 2)
+        self.assertEqual(result.cadence_samples, 4)
+        self.assertAlmostEqual(result.p90_gap_seconds, 24 * 3600)
+
     def test_freshness_late_and_stale(self) -> None:
         reports = [
             self.end - timedelta(hours=value)

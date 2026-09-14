@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -11,7 +12,7 @@ from homeassistant.util import dt as dt_util
 
 from .baseline import learn_baseline
 from .cadence_store import CadenceStore
-from .const import ANALYSIS_INTERVAL, DOMAIN
+from .const import ANALYSIS_INTERVAL, DOMAIN, HISTORY_WINDOW
 from .ha_discovery import async_discover_battery_devices
 from .models import (
     BaselineLearningResult,
@@ -19,7 +20,11 @@ from .models import (
     LongTermHistorySnapshot,
     TelemetryProfile,
 )
-from .operability import OperabilitySnapshot, parse_last_seen
+from .operability import (
+    OperabilitySnapshot,
+    parse_last_seen,
+    summarize_freshness,
+)
 from .operability_recorder import async_get_operability_history
 from .profiler import build_telemetry_profile
 from .recorder import (
@@ -34,11 +39,12 @@ _LOGGER = logging.getLogger(__name__)
 class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
     """Coordinate read-only discovery and Recorder telemetry analysis."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=DOMAIN,
             update_interval=ANALYSIS_INTERVAL,
         )
@@ -55,19 +61,52 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         await self._cadence_store.async_load()
 
     @callback
+    def _publish_live_freshness(
+        self,
+        entity_id: str,
+        device_id: str,
+        timestamp,
+        observed_at,
+    ) -> None:
+        """Publish one live freshness update without running Recorder analysis."""
+        learned = self._cadence_store.timestamps(device_id, observed_at)
+        evidence = summarize_freshness(
+            learned,
+            timestamp,
+            observed_at,
+            observed_at - HISTORY_WINDOW,
+            source="current",
+        )
+        freshness = dict(self.operability.freshness)
+        freshness[entity_id] = evidence
+        self.operability = OperabilitySnapshot(
+            freshness=freshness,
+            outages=self.operability.outages,
+        )
+        self.async_update_listeners()
+
+    @callback
     def _async_handle_last_seen_change(
         self,
         event: Event[EventStateChangedData],
     ) -> None:
-        """Learn one live last_seen sample without touching Recorder."""
-        device_id = self._last_seen_entity_to_device.get(event.data["entity_id"])
+        """Learn and publish one live last_seen sample without touching Recorder."""
+        entity_id = event.data["entity_id"]
+        device_id = self._last_seen_entity_to_device.get(entity_id)
         new_state = event.data["new_state"]
         if device_id is None or new_state is None:
             return
         timestamp = parse_last_seen(new_state.state)
         if timestamp is None:
             return
-        self._cadence_store.observe(device_id, timestamp)
+        observed_at = dt_util.utcnow()
+        self._cadence_store.observe(device_id, timestamp, observed_at)
+        self._publish_live_freshness(
+            entity_id,
+            device_id,
+            timestamp,
+            observed_at,
+        )
 
     @callback
     def _ensure_last_seen_tracking(self, devices, observed_at) -> None:
@@ -102,11 +141,12 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
                 self._cadence_store.observe(device_id, timestamp, observed_at)
 
     async def async_shutdown(self) -> None:
-        """Stop live tracking and flush compact cadence state."""
+        """Stop live tracking, flush cadence state and stop coordinator polling."""
         if self._last_seen_unsub is not None:
             self._last_seen_unsub()
             self._last_seen_unsub = None
         await self._cadence_store.async_save()
+        await super().async_shutdown()
 
     async def _async_update_data(self) -> BatteryHealthSnapshot:
         """Return one read-only telemetry snapshot without baseline Store writes."""
