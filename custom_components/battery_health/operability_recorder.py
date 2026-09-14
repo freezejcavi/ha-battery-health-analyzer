@@ -1,4 +1,4 @@
-"""Recorder adapter for last-seen freshness and outage evidence."""
+"""Recorder adapter for freshness and outage evidence."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ async def _async_get_states(
     window_start: datetime,
     window_end: datetime,
 ) -> dict[str, list[State]]:
-    """Fetch one Recorder batch for operability sources."""
+    """Fetch one Recorder batch for outage-counter sources."""
     if not entity_ids:
         return {}
 
@@ -54,17 +54,16 @@ async def _async_get_states(
 
 def _select_last_seen(
     current_state: State | None,
-    recorder_states: list[State],
+    cadence_timestamps: tuple[datetime, ...],
 ) -> tuple[datetime | None, str]:
-    """Prefer a valid live timestamp, otherwise use latest valid Recorder state."""
+    """Prefer a valid live timestamp, otherwise use the learned cadence Store."""
     if current_state is not None:
         current_last_seen = parse_last_seen(current_state.state)
         if current_last_seen is not None:
             return current_last_seen, "current"
 
-    for state in reversed(recorder_states):
-        if (recorded_last_seen := parse_last_seen(state.state)) is not None:
-            return recorded_last_seen, "recorder"
+    if cadence_timestamps:
+        return cadence_timestamps[-1], "cadence_store"
 
     return None, "unavailable"
 
@@ -74,36 +73,33 @@ async def async_get_operability_history(
     last_seen_entity_ids: list[str],
     outage_entity_ids: list[str],
     window_end: datetime,
+    *,
+    cadence_timestamps: dict[str, tuple[datetime, ...]] | None = None,
 ) -> OperabilitySnapshot:
-    """Build adaptive freshness and reset-aware outage evidence from 24h history."""
-    entity_ids = sorted(set(last_seen_entity_ids + outage_entity_ids))
-    if not entity_ids:
-        return OperabilitySnapshot({}, {})
-
+    """Build live-learned freshness plus reset-aware 24h outage evidence."""
+    cadence_timestamps = cadence_timestamps or {}
     window_start = window_end - HISTORY_WINDOW
+
+    # last_seen cadence is intentionally not learned from Recorder. Real HA
+    # validation showed timestamp entities yielding only a start/current row.
+    # Recorder remains useful for outage counters, whose state transitions are
+    # persisted reliably in the same environment.
     states_by_entity = await _async_get_states(
         hass,
-        entity_ids,
+        outage_entity_ids,
         window_start,
         window_end,
     )
 
     freshness = {}
     for entity_id in last_seen_entity_ids:
-        states = states_by_entity.get(entity_id, [])
-        report_timestamps = [
-            parsed
-            for state in states
-            if (parsed := parse_last_seen(state.state)) is not None
-        ]
-
+        learned = cadence_timestamps.get(entity_id, ())
         current_last_seen, source = _select_last_seen(
             hass.states.get(entity_id),
-            states,
+            learned,
         )
-
         freshness[entity_id] = summarize_freshness(
-            report_timestamps,
+            learned,
             current_last_seen,
             window_end,
             window_start,
