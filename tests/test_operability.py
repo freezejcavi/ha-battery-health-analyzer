@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from custom_components.battery_health.operability import (
     ISSUE_FUTURE_LAST_SEEN,
     ISSUE_INSUFFICIENT_CADENCE,
+    ISSUE_NO_OUTAGE_HISTORY,
     ISSUE_PARTIAL_OUTAGE_WINDOW,
     OutageHistoryPoint,
     parse_last_seen,
@@ -24,13 +25,23 @@ class OperabilityTests(unittest.TestCase):
         self.end = datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
         self.start = self.end - timedelta(hours=24)
 
-    def test_parse_values(self) -> None:
+    def test_parse_last_seen_formats(self) -> None:
         self.assertEqual(
             parse_last_seen("2026-09-14T09:58:00Z"),
             datetime(2026, 9, 14, 9, 58, tzinfo=UTC),
         )
+        local = parse_last_seen("2026-09-14T11:58:00+02:00")
+        self.assertEqual(local, datetime(2026, 9, 14, 9, 58, tzinfo=UTC))
+        epoch = parse_last_seen("1789379880000")
+        self.assertIsNotNone(epoch)
+        self.assertEqual(epoch.tzinfo, UTC)
+
+    def test_parse_outage_count(self) -> None:
         self.assertEqual(parse_outage_count("14"), 14)
+        self.assertEqual(parse_outage_count(14.0), 14)
         self.assertIsNone(parse_outage_count("14.5"))
+        self.assertIsNone(parse_outage_count("unavailable"))
+        self.assertIsNone(parse_outage_count(-1))
 
     def test_freshness_uses_device_specific_cadence(self) -> None:
         reports = [
@@ -45,7 +56,9 @@ class OperabilityTests(unittest.TestCase):
         )
         self.assertEqual(result.state, "fresh")
         self.assertEqual(result.reports_24h, 6)
+        self.assertEqual(result.cadence_samples, 5)
         self.assertAlmostEqual(result.p90_gap_seconds, 3600)
+        self.assertLess(result.age_to_p90_ratio, 1)
 
     def test_freshness_late_and_stale(self) -> None:
         reports = [
@@ -74,6 +87,7 @@ class OperabilityTests(unittest.TestCase):
             self.end,
             self.start,
         )
+        self.assertEqual(insufficient.state, "insufficient")
         self.assertEqual(insufficient.issue, ISSUE_INSUFFICIENT_CADENCE)
         future = summarize_freshness(
             [],
@@ -81,7 +95,23 @@ class OperabilityTests(unittest.TestCase):
             self.end,
             self.start,
         )
+        self.assertEqual(future.state, "invalid")
         self.assertEqual(future.issue, ISSUE_FUTURE_LAST_SEEN)
+
+    def test_freshness_normalizes_aware_datetimes(self) -> None:
+        local_zone = timezone(timedelta(hours=2))
+        current = datetime(2026, 9, 14, 11, 30, tzinfo=local_zone)
+        reports = [
+            datetime(2026, 9, 14, hour, 0, tzinfo=UTC)
+            for hour in (5, 6, 7, 8, 9)
+        ]
+        result = summarize_freshness(
+            reports,
+            current,
+            self.end,
+            self.start,
+        )
+        self.assertEqual(result.last_seen, datetime(2026, 9, 14, 9, 30, tzinfo=UTC))
 
     def test_outage_positive_delta_and_reset(self) -> None:
         points = [
@@ -95,8 +125,9 @@ class OperabilityTests(unittest.TestCase):
         self.assertEqual(result.events_24h, 4)
         self.assertEqual(result.increment_transitions_24h, 3)
         self.assertEqual(result.resets_24h, 1)
+        self.assertIsNone(result.issue)
 
-    def test_outage_partial_and_unsupported(self) -> None:
+    def test_outage_partial_unsupported_and_no_history(self) -> None:
         partial = summarize_outage_history(
             [
                 OutageHistoryPoint(self.start + timedelta(hours=2), 14),
@@ -105,7 +136,9 @@ class OperabilityTests(unittest.TestCase):
             self.start,
             self.end,
         )
+        self.assertEqual(partial.events_24h, 1)
         self.assertEqual(partial.issue, ISSUE_PARTIAL_OUTAGE_WINDOW)
+
         unsupported = summarize_outage_history(
             [],
             self.start,
@@ -114,6 +147,11 @@ class OperabilityTests(unittest.TestCase):
         )
         self.assertFalse(unsupported.supported)
         self.assertIsNone(unsupported.events_24h)
+
+        no_history = summarize_outage_history([], self.start, self.end)
+        self.assertTrue(no_history.supported)
+        self.assertIsNone(no_history.events_24h)
+        self.assertEqual(no_history.issue, ISSUE_NO_OUTAGE_HISTORY)
 
 
 if __name__ == "__main__":
