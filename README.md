@@ -12,6 +12,8 @@ limitation to be worked around.
 
 ## Development status
 
+**Current development version: `0.1.0-dev.11`**
+
 The repository is in a read-only telemetry and evidence-profiling phase.
 Discovery starts from Home Assistant Entity Registry entries whose `platform`
 is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
