@@ -11,6 +11,7 @@ from .const import (
     ISSUE_AMBIGUOUS_BATTERY_LOW,
     ISSUE_AMBIGUOUS_LAST_SEEN,
     ISSUE_AMBIGUOUS_OUTAGE,
+    ISSUE_AMBIGUOUS_TEMPERATURE,
     ISSUE_AMBIGUOUS_VOLTAGE,
     ISSUE_MISSING_BATTERY_PERCENT,
     ISSUE_MISSING_VOLTAGE,
@@ -123,14 +124,42 @@ def _voltage_score(
     if not has_battery_voltage and not is_sibling_voltage:
         return None
 
-    score = (
+    return (
         300 * has_battery_voltage
         + 220 * is_sibling_voltage
         + 40 * is_voltage_class
         + 25 * has_voltage_unit
         + 20 * ends_voltage
     )
-    return score
+
+
+def _temperature_score(entity: EntityDescriptor) -> int | None:
+    """Select only an unambiguous actual temperature measurement."""
+    if entity.domain != "sensor" or entity.device_class != "temperature":
+        return None
+
+    text = entity.searchable_name
+    excluded = (
+        "setpoint",
+        "target",
+        "calibration",
+        "offset",
+        "heating_setpoint",
+        "cooling_setpoint",
+    )
+    if any(token in text for token in excluded):
+        return None
+
+    has_temperature_unit = entity.unit in {
+        "°C",
+        "C",
+        "°F",
+        "F",
+        "celsius",
+        "fahrenheit",
+    }
+    ends_temperature = entity.entity_id.endswith("_temperature")
+    return 100 + 20 * has_temperature_unit + 10 * ends_temperature
 
 
 def _last_seen_score(entity: EntityDescriptor) -> int | None:
@@ -185,6 +214,7 @@ def discover_battery_devices(
             device_entities,
             lambda entity: _voltage_score(entity, source_base),
         )
+        temperature = _select_best(device_entities, _temperature_score)
         last_seen = _select_best(device_entities, _last_seen_score)
         outage = _select_best(device_entities, _outage_score)
 
@@ -199,6 +229,8 @@ def discover_battery_devices(
         if voltage.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_VOLTAGE)
             ambiguous_candidates.append(("voltage", voltage.tied_entity_ids))
+        if temperature.tied_entity_ids:
+            ambiguous_candidates.append(("temperature", temperature.tied_entity_ids))
         if last_seen.tied_entity_ids:
             issues.append(ISSUE_AMBIGUOUS_LAST_SEEN)
             ambiguous_candidates.append(("last_seen", last_seen.tied_entity_ids))
@@ -219,6 +251,12 @@ def discover_battery_devices(
                 voltage_entity_id=voltage.entity_id,
                 last_seen_entity_id=last_seen.entity_id,
                 outage_entity_id=outage.entity_id,
+                temperature_entity_id=temperature.entity_id,
+                temperature_issue=(
+                    ISSUE_AMBIGUOUS_TEMPERATURE
+                    if temperature.tied_entity_ids
+                    else None
+                ),
                 issues=tuple(issues),
                 ambiguous_candidates=tuple(ambiguous_candidates),
             )
