@@ -134,12 +134,20 @@ class BatteryHealthDiscoverySensor(
             )
             device_diagnostics.append(diagnostics)
 
+        freshness_states = (
+            "fresh",
+            "late",
+            "stale",
+            "insufficient",
+            "invalid",
+            "unavailable",
+        )
         freshness_state_counts = {
             state: sum(
                 evidence.state == state
                 for evidence in operability.freshness.values()
             )
-            for state in ("fresh", "late", "stale", "insufficient", "invalid", "unavailable")
+            for state in freshness_states
         }
 
         return {
