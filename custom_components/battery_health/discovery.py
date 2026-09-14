@@ -15,6 +15,7 @@ from .const import (
     ISSUE_AMBIGUOUS_VOLTAGE,
     ISSUE_MISSING_BATTERY_PERCENT,
     ISSUE_MISSING_VOLTAGE,
+    SOURCE_PLATFORM,
 )
 from .models import DiscoveredBatteryDevice, EntityDescriptor
 
@@ -25,6 +26,11 @@ ScoreFunction = Callable[[EntityDescriptor], int | None]
 class _Selection:
     entity_id: str | None
     tied_entity_ids: tuple[str, ...] = ()
+
+
+def is_supported_platform(platform: str | None) -> bool:
+    """Return whether an Entity Registry platform is in integration scope."""
+    return platform == SOURCE_PLATFORM
 
 
 def _select_best(

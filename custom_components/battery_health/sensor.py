@@ -12,7 +12,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, NAME
+from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
 
 
@@ -49,12 +49,12 @@ class BatteryHealthDiscoverySensor(
 
     @property
     def native_value(self) -> int:
-        """Return the number of discovered battery devices."""
+        """Return the number of discovered MQTT battery devices."""
         return len(self.coordinator.data.devices)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return compact read-only dev9 diagnostics."""
+        """Return compact read-only telemetry diagnostics."""
         snapshot = self.coordinator.data
         devices = snapshot.devices
         device_diagnostics: list[dict[str, Any]] = []
@@ -104,6 +104,8 @@ class BatteryHealthDiscoverySensor(
             device_diagnostics.append(diagnostics)
 
         return {
+            "scope": "mqtt_integration_only",
+            "source_platform": SOURCE_PLATFORM,
             "with_voltage": sum(device.has_voltage for device in devices),
             "missing_voltage": sum(
                 "missing_voltage" in device.issues for device in devices

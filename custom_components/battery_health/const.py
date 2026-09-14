@@ -4,6 +4,7 @@ from datetime import timedelta
 
 DOMAIN = "battery_health"
 NAME = "Battery Health Analyzer"
+SOURCE_PLATFORM = "mqtt"
 
 ANALYSIS_INTERVAL = timedelta(minutes=30)
 HISTORY_WINDOW = timedelta(hours=24)

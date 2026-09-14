@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import unittest
 
-from custom_components.battery_health.discovery import discover_battery_devices
+from custom_components.battery_health.discovery import (
+    discover_battery_devices,
+    is_supported_platform,
+)
 from custom_components.battery_health.models import EntityDescriptor
 
 
@@ -31,6 +34,13 @@ def entity(
 
 class DiscoveryTests(unittest.TestCase):
     """Verify deterministic and conservative source pairing."""
+
+    def test_scope_accepts_only_mqtt_registry_platform(self) -> None:
+        self.assertTrue(is_supported_platform("mqtt"))
+        self.assertFalse(is_supported_platform("mobile_app"))
+        self.assertFalse(is_supported_platform("hue"))
+        self.assertFalse(is_supported_platform("zha"))
+        self.assertFalse(is_supported_platform(None))
 
     def test_typical_zigbee_device_is_fully_paired(self) -> None:
         result = discover_battery_devices(
