@@ -21,14 +21,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the discovery diagnostic sensor."""
+    """Set up the telemetry diagnostic sensor."""
     async_add_entities([BatteryHealthDiscoverySensor(entry, entry.runtime_data)])
 
 
 class BatteryHealthDiscoverySensor(
     CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
 ):
-    """Expose the read-only discovery result for practical validation."""
+    """Expose read-only discovery and telemetry profiling diagnostics."""
 
     _attr_has_entity_name = True
     _attr_name = "Discovered devices"
@@ -54,10 +54,11 @@ class BatteryHealthDiscoverySensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return source pairing details for the read-only PoC."""
+        """Return compact read-only dev9 diagnostics."""
         snapshot = self.coordinator.data
         devices = snapshot.devices
         device_diagnostics: list[dict[str, Any]] = []
+
         for device in devices:
             diagnostics = device.as_dict()
             diagnostics["battery_percent_now"] = snapshot.battery_percent.get(
@@ -66,20 +67,39 @@ class BatteryHealthDiscoverySensor(
             diagnostics["battery_percent_source"] = (
                 snapshot.battery_percent_source.get(device.device_id)
             )
+
+            if device.battery_entity_id is not None:
+                battery_history = snapshot.battery_history.get(
+                    device.battery_entity_id
+                )
+                diagnostics["battery_history"] = (
+                    battery_history.as_dict()
+                    if battery_history is not None
+                    else None
+                )
+
             if device.voltage_entity_id is not None:
-                history_summary = snapshot.voltage_history.get(
+                voltage_history = snapshot.voltage_history.get(
                     device.voltage_entity_id
                 )
                 diagnostics["voltage_history"] = (
-                    history_summary.as_dict()
-                    if history_summary is not None
+                    voltage_history.as_dict()
+                    if voltage_history is not None
                     else None
                 )
+
             learning_result = snapshot.baseline_learning.get(device.device_id)
-            diagnostics["baseline"] = (
-                learning_result.as_dict()
-                if learning_result is not None
-                else None
+            if learning_result is not None:
+                baseline = learning_result.as_dict()
+                baseline["status"] = "provisional"
+                baseline["mode"] = "shadow_no_save"
+                diagnostics["baseline"] = baseline
+            else:
+                diagnostics["baseline"] = None
+
+            profile = snapshot.telemetry_profiles.get(device.device_id)
+            diagnostics["telemetry_profile"] = (
+                profile.as_dict() if profile is not None else None
             )
             device_diagnostics.append(diagnostics)
 
@@ -101,5 +121,6 @@ class BatteryHealthDiscoverySensor(
                 result.record is not None
                 for result in snapshot.baseline_learning.values()
             ),
+            "profiles_available": len(snapshot.telemetry_profiles),
             "devices": device_diagnostics,
         }
