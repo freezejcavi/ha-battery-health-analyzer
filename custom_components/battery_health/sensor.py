@@ -12,6 +12,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .baseline_v2 import assess_guarded_baseline_v2
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
 from .cycle import assess_cycle_integrity
@@ -66,6 +67,19 @@ class BatteryHealthDiscoverySensor(
             "stable": 0,
             "possible_boundary": 0,
             "probable_boundary": 0,
+            "insufficient": 0,
+        }
+        baseline_v2_counts = {
+            "eligible": 0,
+            "learning": 0,
+            "blocked": 0,
+            "not_required": 0,
+        }
+        cycle_segment_counts = {
+            "left_censored": 0,
+            "segmented": 0,
+            "current_boundary": 0,
+            "possible_boundary": 0,
             "insufficient": 0,
         }
 
@@ -162,6 +176,7 @@ class BatteryHealthDiscoverySensor(
                     )
             voltage_information = classify_voltage_information(voltage_daily)
 
+            evidence_model = None
             if profile is not None:
                 evidence_model = build_evidence_model(
                     profile,
@@ -188,6 +203,23 @@ class BatteryHealthDiscoverySensor(
             diagnostics["cycle_integrity"] = cycle_integrity.as_dict()
             if cycle_integrity.state in cycle_integrity_counts:
                 cycle_integrity_counts[cycle_integrity.state] += 1
+
+            if evidence_model is not None:
+                baseline_v2 = assess_guarded_baseline_v2(
+                    battery_daily,
+                    voltage_daily,
+                    voltage_history,
+                    evidence_model,
+                    cycle_integrity,
+                    voltage_information,
+                )
+                diagnostics["baseline_v2"] = baseline_v2.as_dict()
+                if baseline_v2.eligibility in baseline_v2_counts:
+                    baseline_v2_counts[baseline_v2.eligibility] += 1
+                if baseline_v2.cycle_segment.state in cycle_segment_counts:
+                    cycle_segment_counts[baseline_v2.cycle_segment.state] += 1
+            else:
+                diagnostics["baseline_v2"] = None
 
             device_diagnostics.append(diagnostics)
 
@@ -237,5 +269,7 @@ class BatteryHealthDiscoverySensor(
             ),
             "evidence_readiness": evidence_readiness,
             "cycle_integrity": cycle_integrity_counts,
+            "baseline_v2_eligibility": baseline_v2_counts,
+            "cycle_segments": cycle_segment_counts,
             "devices": device_diagnostics,
         }
