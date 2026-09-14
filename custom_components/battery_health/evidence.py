@@ -3,10 +3,40 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from .models import BatteryHistorySummary, TelemetryProfile, VoltageHistorySummary
 from .operability import FreshnessEvidence, OutageEvidence
+
+VOLTAGE_INFORMATION_MIN_DAYS = 5
+VOLTAGE_STATIC_SPAN_MV = 1.0
+VOLTAGE_QUANTIZED_MAX_LEVELS = 6
+VOLTAGE_QUANTIZED_MIN_STEP_MV = 25.0
+
+
+@dataclass(frozen=True, slots=True)
+class VoltageInformation:
+    """Describe how much information a voltage channel actually carries."""
+
+    information: str
+    confidence: float
+    valid_days: int
+    distinct_levels: int
+    span_mv: float | None
+    min_step_mv: float | None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return compact diagnostics."""
+        return {
+            "type": self.information,
+            "confidence": round(self.confidence, 3),
+            "valid_days": self.valid_days,
+            "distinct_levels": self.distinct_levels,
+            "span_mv": round(self.span_mv, 1) if self.span_mv is not None else None,
+            "min_step_mv": (
+                round(self.min_step_mv, 1) if self.min_step_mv is not None else None
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +48,7 @@ class EvidenceModel:
     battery_role: str
     battery_processing: str
     voltage_role: str
+    voltage_information: VoltageInformation
     battery_voltage_topology: str
     temperature_context: str
     outage_role: str
@@ -38,12 +69,89 @@ class EvidenceModel:
                 "role": self.battery_role,
                 "processing": self.battery_processing,
             },
-            "voltage": {"role": self.voltage_role},
+            "voltage": {
+                "role": self.voltage_role,
+                "information": self.voltage_information.as_dict(),
+            },
             "battery_voltage_topology": self.battery_voltage_topology,
             "temperature_context": self.temperature_context,
             "outage_role": self.outage_role,
             "limitations": list(self.limitations),
         }
+
+
+def classify_voltage_information(
+    voltage_daily: Mapping[str, VoltageHistorySummary],
+) -> VoltageInformation:
+    """Classify voltage telemetry as continuous, quantized, static or insufficient."""
+    valid = [
+        summary
+        for _, summary in sorted(voltage_daily.items())
+        if summary.median_mv is not None and summary.issue is None
+    ]
+    valid_days = len(valid)
+    if valid_days < VOLTAGE_INFORMATION_MIN_DAYS:
+        return VoltageInformation("insufficient", 0.0, valid_days, 0, None, None)
+
+    values: list[float] = []
+    for summary in valid:
+        for value in (
+            summary.p10_mv,
+            summary.median_mv,
+            summary.p90_mv,
+            summary.min_mv,
+            summary.max_mv,
+        ):
+            if value is not None:
+                values.append(float(value))
+
+    if not values:
+        return VoltageInformation("insufficient", 0.0, valid_days, 0, None, None)
+
+    rounded_levels = sorted({round(value, 1) for value in values})
+    span = max(values) - min(values)
+    distinct_levels = len(rounded_levels)
+    steps = [
+        right - left
+        for left, right in zip(rounded_levels, rounded_levels[1:], strict=False)
+        if right > left
+    ]
+    min_step = min(steps) if steps else None
+
+    if span <= VOLTAGE_STATIC_SPAN_MV or distinct_levels == 1:
+        return VoltageInformation(
+            "static",
+            1.0,
+            valid_days,
+            distinct_levels,
+            span,
+            min_step,
+        )
+
+    if (
+        2 <= distinct_levels <= VOLTAGE_QUANTIZED_MAX_LEVELS
+        and min_step is not None
+        and min_step >= VOLTAGE_QUANTIZED_MIN_STEP_MV
+    ):
+        confidence = min(1.0, 0.75 + valid_days / 120)
+        return VoltageInformation(
+            "quantized",
+            confidence,
+            valid_days,
+            distinct_levels,
+            span,
+            min_step,
+        )
+
+    confidence = min(1.0, 0.7 + valid_days / 100)
+    return VoltageInformation(
+        "continuous",
+        confidence,
+        valid_days,
+        distinct_levels,
+        span,
+        min_step,
+    )
 
 
 def _freshness_gate(freshness: FreshnessEvidence | None) -> str:
@@ -105,6 +213,7 @@ def build_evidence_model(
     voltage: VoltageHistorySummary | None,
     freshness: FreshnessEvidence | None,
     outage: OutageEvidence | None,
+    voltage_information: VoltageInformation,
 ) -> EvidenceModel:
     """Route telemetry channels conservatively without producing health state."""
     gate = _freshness_gate(freshness)
@@ -126,14 +235,14 @@ def build_evidence_model(
     battery_processing = _battery_processing(profile.battery_behavior.behavior)
     battery_role = "primary" if battery_available else "unavailable"
 
-    voltage_information = profile.voltage_information.information
+    information = voltage_information.information
     if not voltage_available:
         voltage_role = "unavailable"
-    elif voltage_information == "static":
+    elif information == "static":
         voltage_role = "context_only"
-    elif voltage_information == "quantized":
+    elif information == "quantized":
         voltage_role = "supporting"
-    elif voltage_information == "continuous":
+    elif information == "continuous":
         voltage_role = "primary"
     else:
         voltage_role = "limited"
@@ -165,11 +274,11 @@ def build_evidence_model(
         limitations.append("battery_unavailable")
     if not voltage_available:
         limitations.append("voltage_unavailable")
-    elif voltage_information == "static":
+    elif information == "static":
         limitations.append("voltage_static")
-    elif voltage_information == "quantized":
+    elif information == "quantized":
         limitations.append("voltage_quantized")
-    elif voltage_information == "insufficient":
+    elif information == "insufficient":
         limitations.append("voltage_information_insufficient")
     if topology == "unknown" and battery_available and voltage_available:
         limitations.append("battery_voltage_independence_unknown")
@@ -189,6 +298,7 @@ def build_evidence_model(
         battery_role=battery_role,
         battery_processing=battery_processing,
         voltage_role=voltage_role,
+        voltage_information=voltage_information,
         battery_voltage_topology=topology,
         temperature_context=_temperature_context(
             profile.voltage_temperature_relation.relation
