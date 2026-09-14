@@ -26,7 +26,9 @@ The sensor state is the number of discovered battery devices. Its diagnostic
 attributes show the selected source entities, discovery issues and the exact
 candidate entity IDs behind any ambiguous selection. For each selected voltage
 source, `voltage_history` contains `median_24h_mv`, valid-time coverage and a
-compact status. All diagnostic attributes are excluded from Recorder.
+compact status. Historical state attributes provide the source unit, with the
+current state used only as a fallback. All diagnostic attributes are excluded
+from Recorder.
 
 Voltage discovery uses the stable sibling entity-ID base as its fallback, so
 temporarily unavailable sleeping devices do not disappear from the pairing

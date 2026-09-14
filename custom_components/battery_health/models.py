@@ -89,6 +89,7 @@ class VoltageHistorySummary:
     valid_duration_seconds: float
     source_points: int
     latest_voltage_mv: float | None
+    source_units: tuple[str, ...] = ()
     issue: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -107,6 +108,7 @@ class VoltageHistorySummary:
                 if self.latest_voltage_mv is not None
                 else None
             ),
+            "source_units": list(self.source_units),
             "issue": self.issue,
         }
 
