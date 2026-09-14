@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
 from math import sqrt
 from statistics import median
-from typing import Iterable, Sequence
+
+from .models import (
+    BatteryHistorySummary,
+    BehaviorClassification,
+    NumericHistorySummary,
+    RelationClassification,
+    TelemetryProfile,
+    VoltageHistorySummary,
+)
 
 
 MIN_PROFILE_DAYS = 5
@@ -17,24 +25,6 @@ RELATION_MIN_PAIRS = 7
 BATTERY_VOLTAGE_DERIVED_CORRELATION = 0.95
 STRONG_RELATION_CORRELATION = 0.8
 MODERATE_RELATION_CORRELATION = 0.6
-
-
-@dataclass(frozen=True, slots=True)
-class BehaviorClassification:
-    """Battery reporting behavior inferred from daily aggregates."""
-
-    behavior: str
-    confidence: float
-    valid_days: int
-
-
-@dataclass(frozen=True, slots=True)
-class RelationClassification:
-    """Relationship between two telemetry signals."""
-
-    relation: str
-    correlation: float | None
-    paired_days: int
 
 
 def _finite_values(values: Iterable[float | None]) -> list[float]:
@@ -50,7 +40,9 @@ def _finite_values(values: Iterable[float | None]) -> list[float]:
     return result
 
 
-def stable_upper_envelope(daily_p90_values: Iterable[float | None]) -> float | None:
+def stable_upper_envelope(
+    daily_p90_values: Iterable[float | None],
+) -> float | None:
     """Return the robust upper envelope as the median of daily p90 values."""
     values = _finite_values(daily_p90_values)
     return float(median(values)) if values else None
@@ -179,4 +171,78 @@ def classify_temperature_relation(
     else:
         strength = "weak"
     direction = "positive" if correlation >= 0 else "negative"
-    return RelationClassification(f"{strength}_{direction}", correlation, paired_days)
+    return RelationClassification(
+        f"{strength}_{direction}",
+        correlation,
+        paired_days,
+    )
+
+
+def build_telemetry_profile(
+    battery_daily: Mapping[str, BatteryHistorySummary],
+    voltage_daily: Mapping[str, VoltageHistorySummary],
+    temperature_daily: Mapping[str, NumericHistorySummary] | None = None,
+) -> TelemetryProfile:
+    """Build one compact profile from aligned complete-day summaries."""
+    temperatures = temperature_daily or {}
+    days = sorted(
+        set(battery_daily)
+        | set(voltage_daily)
+        | set(temperatures)
+    )
+
+    battery_median = [
+        battery_daily[day].median_percent if day in battery_daily else None
+        for day in days
+    ]
+    battery_p90 = [
+        battery_daily[day].p90_percent if day in battery_daily else None
+        for day in days
+    ]
+    voltage_p90 = [
+        voltage_daily[day].p90_mv if day in voltage_daily else None
+        for day in days
+    ]
+    temperature_p90 = [
+        temperatures[day].p90 if day in temperatures else None
+        for day in days
+    ]
+
+    last_seven_days = days[-7:]
+    battery_upper = stable_upper_envelope(
+        battery_daily[day].p90_percent
+        if day in battery_daily
+        else None
+        for day in last_seven_days
+    )
+    voltage_upper = stable_upper_envelope(
+        voltage_daily[day].p90_mv
+        if day in voltage_daily
+        else None
+        for day in last_seven_days
+    )
+
+    behavior = classify_battery_behavior(battery_median)
+    battery_voltage = classify_battery_voltage_relation(
+        battery_p90,
+        voltage_p90,
+    )
+    voltage_temperature = (
+        classify_temperature_relation(
+            voltage_p90,
+            temperature_p90,
+        )
+        if temperatures
+        else RelationClassification("unavailable", None, 0)
+    )
+
+    return TelemetryProfile(
+        battery_behavior=behavior,
+        battery_upper_7d_percent=battery_upper,
+        voltage_upper_7d_mv=voltage_upper,
+        battery_voltage_relation=battery_voltage,
+        voltage_temperature_relation=voltage_temperature,
+        battery_days=sum(value is not None for value in battery_median),
+        voltage_days=sum(value is not None for value in voltage_p90),
+        temperature_days=sum(value is not None for value in temperature_p90),
+    )
