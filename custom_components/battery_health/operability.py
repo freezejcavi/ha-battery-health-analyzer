@@ -188,7 +188,7 @@ def summarize_freshness(
     supported: bool = True,
     source: str = "current",
 ) -> FreshnessEvidence:
-    """Summarize device-specific reporting cadence and current freshness."""
+    """Summarize learned cadence while keeping report count bounded to 24h."""
     if not supported:
         return FreshnessEvidence(
             supported=False,
@@ -213,14 +213,15 @@ def summarize_freshness(
     if current_last_seen is not None:
         normalized.add(_as_utc(current_last_seen))
 
-    reports = sorted(
+    cadence_reports = sorted(normalized)
+    reports_24h = [
         timestamp
-        for timestamp in normalized
+        for timestamp in cadence_reports
         if window_start_utc <= timestamp <= observed_utc
-    )
+    ]
     gaps = [
         (later - earlier).total_seconds()
-        for earlier, later in zip(reports, reports[1:], strict=False)
+        for earlier, later in zip(cadence_reports, cadence_reports[1:], strict=False)
         if later > earlier
     ]
     median_gap = _percentile(gaps, 0.5) if gaps else None
@@ -232,7 +233,7 @@ def summarize_freshness(
             last_seen=None,
             source=source,
             age_seconds=None,
-            reports_24h=len(reports),
+            reports_24h=len(reports_24h),
             cadence_samples=len(gaps),
             median_gap_seconds=median_gap,
             p90_gap_seconds=p90_gap,
@@ -249,7 +250,7 @@ def summarize_freshness(
             last_seen=current_utc,
             source=source,
             age_seconds=age_seconds,
-            reports_24h=len(reports),
+            reports_24h=len(reports_24h),
             cadence_samples=len(gaps),
             median_gap_seconds=median_gap,
             p90_gap_seconds=p90_gap,
@@ -269,7 +270,7 @@ def summarize_freshness(
             last_seen=current_utc,
             source=source,
             age_seconds=age_seconds,
-            reports_24h=len(reports),
+            reports_24h=len(reports_24h),
             cadence_samples=len(gaps),
             median_gap_seconds=median_gap,
             p90_gap_seconds=p90_gap,
@@ -291,7 +292,7 @@ def summarize_freshness(
         last_seen=current_utc,
         source=source,
         age_seconds=age_seconds,
-        reports_24h=len(reports),
+        reports_24h=len(reports_24h),
         cadence_samples=len(gaps),
         median_gap_seconds=median_gap,
         p90_gap_seconds=p90_gap,
