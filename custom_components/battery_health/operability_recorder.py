@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 
 from homeassistant.components.recorder import get_instance, history
@@ -18,6 +18,8 @@ from .operability import (
     summarize_freshness,
     summarize_outage_history,
 )
+
+CADENCE_WINDOW = timedelta(days=7)
 
 
 async def _async_get_states(
@@ -68,6 +70,26 @@ def _select_last_seen(
     return None, "unavailable"
 
 
+def _reports_24h(
+    learned: tuple[datetime, ...],
+    current_last_seen: datetime | None,
+    window_start: datetime,
+    window_end: datetime,
+) -> int:
+    """Count distinct learned/live reports inside the current 24-hour window."""
+    recent = {
+        timestamp
+        for timestamp in learned
+        if window_start <= timestamp <= window_end
+    }
+    if (
+        current_last_seen is not None
+        and window_start <= current_last_seen <= window_end
+    ):
+        recent.add(current_last_seen)
+    return len(recent)
+
+
 async def async_get_operability_history(
     hass: HomeAssistant,
     last_seen_entity_ids: list[str],
@@ -79,6 +101,7 @@ async def async_get_operability_history(
     """Build live-learned freshness plus reset-aware 24h outage evidence."""
     cadence_timestamps = cadence_timestamps or {}
     window_start = window_end - HISTORY_WINDOW
+    cadence_window_start = window_end - CADENCE_WINDOW
 
     # last_seen cadence is intentionally not learned from Recorder. Real HA
     # validation showed timestamp entities yielding only a start/current row.
@@ -98,12 +121,21 @@ async def async_get_operability_history(
             hass.states.get(entity_id),
             learned,
         )
-        freshness[entity_id] = summarize_freshness(
+        evidence = summarize_freshness(
             learned,
             current_last_seen,
             window_end,
-            window_start,
+            cadence_window_start,
             source=source,
+        )
+        freshness[entity_id] = replace(
+            evidence,
+            reports_24h=_reports_24h(
+                learned,
+                current_last_seen,
+                window_start,
+                window_end,
+            ),
         )
 
     outages = {}
