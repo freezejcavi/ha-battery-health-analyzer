@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.11`**
+**Current development version: `0.1.0-dev.12`**
 
 The repository is in a read-only telemetry and evidence-profiling phase.
 Discovery starts from Home Assistant Entity Registry entries whose `platform`
@@ -20,6 +20,11 @@ is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
 `power_outage_count` and an optional safe same-device temperature source.
 
 There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
+
+Dev12 hardens `last_seen` startup handling: a valid live timestamp is preferred,
+otherwise the latest valid Recorder timestamp is used. The operability Recorder
+query requests full state changes so report-cadence learning is not dependent on
+Home Assistant's significant-change filtering.
 
 ## Dev11 freshness and outage evidence
 
@@ -134,7 +139,7 @@ never skipped.
 1. Limit source discovery to Entity Registry platform `mqtt`. ✅ dev10
 2. Discover and safely pair MQTT battery telemetry on the same HA device. ✅
 3. Read and profile 24h / 7d / 30d battery and voltage telemetry. ✅ dev9
-4. Add adaptive `last_seen` freshness evidence. 🧪 dev11
+4. Add adaptive `last_seen` freshness evidence. 🧪 dev11/dev12
 5. Add reset-aware 24h `power_outage_count` evidence. 🧪 dev11
 6. Validate operability evidence on real Zigbee2MQTT devices.
 7. Build the evidence/confidence model from validated telemetry channels.
