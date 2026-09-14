@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from functools import partial
 
@@ -113,11 +114,14 @@ async def async_get_operability_history(
             )
             for state in states
         ]
-        outages[entity_id] = summarize_outage_history(
+        evidence = summarize_outage_history(
             points,
             window_start,
             window_end,
             latest_count=latest_count,
         )
+        if current_state is not None and latest_count is None:
+            evidence = replace(evidence, latest_count=None)
+        outages[entity_id] = evidence
 
     return OperabilitySnapshot(freshness=freshness, outages=outages)
