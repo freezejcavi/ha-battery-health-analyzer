@@ -47,7 +47,11 @@ class DiscoveryTests(unittest.TestCase):
                 ),
                 entity("sensor.freezer_last_seen"),
                 entity("sensor.freezer_power_outage_count"),
-                entity("sensor.freezer_temperature", device_class="temperature"),
+                entity(
+                    "sensor.freezer_temperature",
+                    device_class="temperature",
+                    unit="°C",
+                ),
             ],
             {"device-1": "Freezer temperature"},
         )
@@ -62,6 +66,11 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(
             device.outage_entity_id, "sensor.freezer_power_outage_count"
         )
+        self.assertEqual(
+            device.temperature_entity_id,
+            "sensor.freezer_temperature",
+        )
+        self.assertEqual(device.temperature_issue, None)
         self.assertEqual(device.issues, ())
 
     def test_battery_specific_voltage_beats_generic_voltage(self) -> None:
@@ -114,14 +123,65 @@ class DiscoveryTests(unittest.TestCase):
                 ),
             ),
         )
+
+    def test_temperature_setpoints_and_calibration_are_not_candidates(self) -> None:
+        result = discover_battery_devices(
+            [
+                entity("sensor.radiator_battery", device_class="battery", unit="%"),
+                entity(
+                    "sensor.radiator_temperature",
+                    device_class="temperature",
+                    unit="°C",
+                ),
+                entity(
+                    "sensor.radiator_temperature_calibration",
+                    device_class="temperature",
+                    unit="°C",
+                ),
+                entity(
+                    "sensor.radiator_heating_setpoint",
+                    device_class="temperature",
+                    unit="°C",
+                ),
+            ]
+        )
+
         self.assertEqual(
-            result[0].as_dict()["ambiguous_candidates"],
-            {
-                "voltage": [
-                    "sensor.device_a_battery_voltage",
-                    "sensor.device_b_battery_voltage",
-                ]
-            },
+            result[0].temperature_entity_id,
+            "sensor.radiator_temperature",
+        )
+        self.assertIsNone(result[0].temperature_issue)
+
+    def test_ambiguous_temperature_is_optional_and_never_guessed(self) -> None:
+        result = discover_battery_devices(
+            [
+                entity("sensor.device_battery", device_class="battery", unit="%"),
+                entity(
+                    "sensor.device_room_temperature",
+                    device_class="temperature",
+                    unit="°C",
+                ),
+                entity(
+                    "sensor.device_internal_temperature",
+                    device_class="temperature",
+                    unit="°C",
+                ),
+            ]
+        )
+
+        device = result[0]
+        self.assertIsNone(device.temperature_entity_id)
+        self.assertEqual(device.temperature_issue, "ambiguous_temperature")
+        self.assertFalse(device.is_ambiguous)
+        self.assertIn(
+            (
+                "temperature",
+                (
+                    "sensor.device_internal_temperature",
+                    "sensor.device_room_temperature",
+                ),
+            ),
+            device.ambiguous_candidates,
         )
 
     def test_disabled_sources_are_ignored(self) -> None:

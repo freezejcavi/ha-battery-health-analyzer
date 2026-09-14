@@ -116,6 +116,23 @@ class TimeWeightedVoltageTests(unittest.TestCase):
         self.assertEqual(summary.history_rows, 5)
         self.assertEqual(summary.value_changes, 0)
 
+    def test_subwindow_counts_only_relevant_rows_and_changes(self) -> None:
+        summary = summarize_voltage_history(
+            [
+                point(-24, 3100),
+                point(-12, 3000),
+                point(6, 2900),
+                point(12, 2800),
+                point(30, 2700),
+            ],
+            START,
+            END,
+        )
+
+        self.assertEqual(summary.history_rows, 3)
+        self.assertEqual(summary.value_changes, 2)
+        self.assertEqual(summary.median_mv, 2800)
+
     def test_voltage_exposes_robust_range_statistics(self) -> None:
         summary = summarize_voltage_history(
             [point(0, 3000), point(8, 2800), point(16, 2900)],

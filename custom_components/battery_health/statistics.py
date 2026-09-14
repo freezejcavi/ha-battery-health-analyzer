@@ -8,6 +8,8 @@ from datetime import datetime
 from .models import (
     BatteryHistoryPoint,
     BatteryHistorySummary,
+    NumericHistoryPoint,
+    NumericHistorySummary,
     VoltageHistoryPoint,
     VoltageHistorySummary,
 )
@@ -33,6 +35,23 @@ def normalize_voltage_mv(value: str | float, unit: str | None) -> float | None:
         return numeric_value
     if normalized_unit in {"v", "volt", "volts"}:
         return numeric_value * 1000
+    return None
+
+
+def normalize_temperature_c(value: str | float, unit: str | None) -> float | None:
+    """Convert a finite temperature value to degrees Celsius."""
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric_value != numeric_value or numeric_value in (float("inf"), float("-inf")):
+        return None
+
+    normalized_unit = (unit or "").strip().casefold()
+    if normalized_unit in {"°c", "c", "celsius"}:
+        return numeric_value
+    if normalized_unit in {"°f", "f", "fahrenheit"}:
+        return (numeric_value - 32) * 5 / 9
     return None
 
 
@@ -88,12 +107,29 @@ def _weighted_window(
         else:
             deduplicated.append((timestamp, value))
 
+    carry = next(
+        (
+            point
+            for point in reversed(deduplicated)
+            if point[0] <= window_start
+        ),
+        None,
+    )
+    relevant: list[tuple[datetime, float | None]] = []
+    if carry is not None:
+        relevant.append(carry)
+    relevant.extend(
+        point
+        for point in deduplicated
+        if window_start < point[0] < window_end
+    )
+
     weighted_values: list[tuple[float, float]] = []
-    for index, (timestamp, value) in enumerate(deduplicated):
+    for index, (timestamp, value) in enumerate(relevant):
         interval_start = max(timestamp, window_start)
         next_timestamp = (
-            deduplicated[index + 1][0]
-            if index + 1 < len(deduplicated)
+            relevant[index + 1][0]
+            if index + 1 < len(relevant)
             else window_end
         )
         interval_end = min(next_timestamp, window_end)
@@ -102,20 +138,13 @@ def _weighted_window(
             weighted_values.append((value, duration))
 
     valid_duration = sum(duration for _, duration in weighted_values)
-    latest_value = next(
-        (
-            value
-            for timestamp, value in reversed(deduplicated)
-            if timestamp <= window_end
-        ),
-        None,
-    )
-    value_changes = _count_value_changes(value for _, value in deduplicated)
+    latest_value = relevant[-1][1] if relevant else None
+    value_changes = _count_value_changes(value for _, value in relevant)
     return (
         weighted_values,
         valid_duration,
         latest_value,
-        len(deduplicated),
+        len(relevant),
         value_changes,
     )
 
@@ -263,4 +292,77 @@ def summarize_battery_history(
         history_rows=history_rows,
         value_changes=value_changes,
         latest_percent=latest_value,
+    )
+
+
+def summarize_numeric_history(
+    points: Iterable[NumericHistoryPoint],
+    window_start: datetime,
+    window_end: datetime,
+) -> NumericHistorySummary:
+    """Calculate robust time-weighted statistics for a generic numeric signal."""
+    if window_end <= window_start:
+        raise ValueError("window_end must be after window_start")
+
+    point_list = list(points)
+    if not point_list:
+        return NumericHistorySummary(
+            p10=None,
+            median=None,
+            p90=None,
+            minimum=None,
+            maximum=None,
+            value_range=None,
+            coverage_ratio=0,
+            valid_duration_seconds=0,
+            history_rows=0,
+            value_changes=0,
+            latest=None,
+            issue=ISSUE_NO_RECORDER_HISTORY,
+        )
+
+    (
+        weighted_values,
+        valid_duration,
+        latest_value,
+        history_rows,
+        value_changes,
+    ) = _weighted_window(
+        [(point.timestamp, point.value) for point in point_list],
+        window_start,
+        window_end,
+    )
+    window_duration = (window_end - window_start).total_seconds()
+
+    if not weighted_values:
+        return NumericHistorySummary(
+            p10=None,
+            median=None,
+            p90=None,
+            minimum=None,
+            maximum=None,
+            value_range=None,
+            coverage_ratio=0,
+            valid_duration_seconds=0,
+            history_rows=history_rows,
+            value_changes=value_changes,
+            latest=latest_value,
+            issue="no_valid_numeric_value",
+        )
+
+    values = [value for value, _ in weighted_values]
+    minimum = min(values)
+    maximum = max(values)
+    return NumericHistorySummary(
+        p10=_weighted_percentile(weighted_values, 0.1),
+        median=_weighted_percentile(weighted_values, 0.5),
+        p90=_weighted_percentile(weighted_values, 0.9),
+        minimum=minimum,
+        maximum=maximum,
+        value_range=maximum - minimum,
+        coverage_ratio=min(1.0, valid_duration / window_duration),
+        valid_duration_seconds=valid_duration,
+        history_rows=history_rows,
+        value_changes=value_changes,
+        latest=latest_value,
     )

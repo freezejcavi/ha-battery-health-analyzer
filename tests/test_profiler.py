@@ -4,13 +4,70 @@ from __future__ import annotations
 
 import unittest
 
+from custom_components.battery_health.models import (
+    BatteryHistorySummary,
+    NumericHistorySummary,
+    VoltageHistorySummary,
+)
 from custom_components.battery_health.profiler import (
+    build_telemetry_profile,
     classify_battery_behavior,
     classify_battery_voltage_relation,
     classify_temperature_relation,
     pearson_correlation,
     stable_upper_envelope,
 )
+
+
+def battery_summary(p50: float, p90: float) -> BatteryHistorySummary:
+    """Create one compact daily battery summary."""
+    return BatteryHistorySummary(
+        p10_percent=p50,
+        median_percent=p50,
+        p90_percent=p90,
+        min_percent=p50,
+        max_percent=p90,
+        range_percent=p90 - p50,
+        coverage_ratio=1,
+        valid_duration_seconds=86400,
+        history_rows=2,
+        value_changes=1,
+        latest_percent=p50,
+    )
+
+
+def voltage_summary(p50: float, p90: float) -> VoltageHistorySummary:
+    """Create one compact daily voltage summary."""
+    return VoltageHistorySummary(
+        median_mv=p50,
+        coverage_ratio=1,
+        valid_duration_seconds=86400,
+        source_points=2,
+        latest_voltage_mv=p50,
+        p10_mv=p50,
+        p90_mv=p90,
+        min_mv=p50,
+        max_mv=p90,
+        range_mv=p90 - p50,
+        value_changes=1,
+    )
+
+
+def temperature_summary(p90: float) -> NumericHistorySummary:
+    """Create one compact daily temperature summary."""
+    return NumericHistorySummary(
+        p10=p90,
+        median=p90,
+        p90=p90,
+        minimum=p90,
+        maximum=p90,
+        value_range=0,
+        coverage_ratio=1,
+        valid_duration_seconds=86400,
+        history_rows=1,
+        value_changes=0,
+        latest=p90,
+    )
 
 
 class UpperEnvelopeTests(unittest.TestCase):
@@ -109,6 +166,56 @@ class CorrelationTests(unittest.TestCase):
 
         self.assertEqual(result.relation, "insufficient")
         self.assertEqual(result.paired_days, 6)
+
+
+class ProfileBuilderTests(unittest.TestCase):
+    """Verify aligned daily summaries are converted to one compact profile."""
+
+    def test_builds_envelope_behavior_and_relations(self) -> None:
+        days = [f"2026-09-{day:02d}" for day in range(1, 9)]
+        battery_daily = {
+            day: battery_summary(p50, p90)
+            for day, p50, p90 in zip(
+                days,
+                [10, 40, 5, 45, 0, 49, 12, 35],
+                [15, 45, 10, 50, 5, 54, 17, 40],
+            )
+        }
+        voltage_daily = {
+            day: voltage_summary(2700 + index * 20, 2750 + index * 20)
+            for index, day in enumerate(days)
+        }
+        temperature_daily = {
+            day: temperature_summary(-5 + index * 5)
+            for index, day in enumerate(days)
+        }
+
+        profile = build_telemetry_profile(
+            battery_daily,
+            voltage_daily,
+            temperature_daily,
+        )
+
+        self.assertEqual(profile.battery_behavior.behavior, "volatile")
+        self.assertEqual(profile.battery_days, 8)
+        self.assertEqual(profile.voltage_days, 8)
+        self.assertEqual(profile.temperature_days, 8)
+        self.assertIsNotNone(profile.battery_upper_7d_percent)
+        self.assertEqual(
+            profile.voltage_temperature_relation.relation,
+            "strong_positive",
+        )
+
+    def test_missing_temperature_source_is_unavailable(self) -> None:
+        profile = build_telemetry_profile(
+            {"2026-09-01": battery_summary(80, 85)},
+            {"2026-09-01": voltage_summary(3000, 3050)},
+        )
+
+        self.assertEqual(
+            profile.voltage_temperature_relation.relation,
+            "unavailable",
+        )
 
 
 if __name__ == "__main__":
