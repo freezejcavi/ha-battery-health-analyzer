@@ -39,6 +39,8 @@ class DiscoveredBatteryDevice:
     voltage_entity_id: str | None
     last_seen_entity_id: str | None
     outage_entity_id: str | None
+    temperature_entity_id: str | None = None
+    temperature_issue: str | None = None
     issues: tuple[str, ...] = ()
     ambiguous_candidates: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
@@ -49,7 +51,7 @@ class DiscoveredBatteryDevice:
 
     @property
     def is_ambiguous(self) -> bool:
-        """Return whether at least one source role could not be selected safely."""
+        """Return whether a core source role could not be selected safely."""
         return any(issue.startswith("ambiguous_") for issue in self.issues)
 
     def as_dict(self) -> dict[str, Any]:
@@ -62,6 +64,8 @@ class DiscoveredBatteryDevice:
             "voltage_entity_id": self.voltage_entity_id,
             "last_seen_entity_id": self.last_seen_entity_id,
             "outage_entity_id": self.outage_entity_id,
+            "temperature_entity_id": self.temperature_entity_id,
+            "temperature_issue": self.temperature_issue,
             "issues": list(self.issues),
         }
         if self.ambiguous_candidates:
@@ -86,6 +90,14 @@ class BatteryHistoryPoint:
 
     timestamp: datetime
     battery_percent: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class NumericHistoryPoint:
+    """One generic numeric state transition used by the statistics engine."""
+
+    timestamp: datetime
+    value: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +193,24 @@ class BatteryHistorySummary:
 
 
 @dataclass(frozen=True, slots=True)
+class NumericHistorySummary:
+    """Compact result of one generic numeric Recorder window."""
+
+    p10: float | None
+    median: float | None
+    p90: float | None
+    minimum: float | None
+    maximum: float | None
+    value_range: float | None
+    coverage_ratio: float
+    valid_duration_seconds: float
+    history_rows: int
+    value_changes: int
+    latest: float | None
+    issue: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RecorderHistorySnapshot:
     """Combined result of one voltage and battery Recorder query."""
 
@@ -188,6 +218,92 @@ class RecorderHistorySnapshot:
     battery_percent: dict[str, float | None]
     battery_percent_source: dict[str, str]
     battery_history: dict[str, BatteryHistorySummary] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LongTermHistorySnapshot:
+    """Daily aggregates from the one-time long-term Recorder query."""
+
+    battery_daily: dict[str, dict[str, BatteryHistorySummary]]
+    voltage_daily: dict[str, dict[str, VoltageHistorySummary]]
+    temperature_daily: dict[str, dict[str, NumericHistorySummary]]
+
+
+@dataclass(frozen=True, slots=True)
+class BehaviorClassification:
+    """Battery reporting behavior inferred from daily aggregates."""
+
+    behavior: str
+    confidence: float
+    valid_days: int
+
+
+@dataclass(frozen=True, slots=True)
+class RelationClassification:
+    """Relationship between two telemetry signals."""
+
+    relation: str
+    correlation: float | None
+    paired_days: int
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryProfile:
+    """Compact long-term telemetry profile for one battery device."""
+
+    battery_behavior: BehaviorClassification
+    battery_upper_7d_percent: float | None
+    voltage_upper_7d_mv: float | None
+    battery_voltage_relation: RelationClassification
+    voltage_temperature_relation: RelationClassification
+    battery_days: int
+    voltage_days: int
+    temperature_days: int
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return compact diagnostics without exposing daily raw aggregates."""
+        def relation_dict(result: RelationClassification) -> dict[str, Any]:
+            return {
+                "type": result.relation,
+                "correlation": (
+                    round(result.correlation, 3)
+                    if result.correlation is not None
+                    else None
+                ),
+                "paired_days": result.paired_days,
+            }
+
+        return {
+            "envelope_7d": {
+                "battery_upper_percent": (
+                    round(self.battery_upper_7d_percent, 1)
+                    if self.battery_upper_7d_percent is not None
+                    else None
+                ),
+                "voltage_upper_mv": (
+                    round(self.voltage_upper_7d_mv)
+                    if self.voltage_upper_7d_mv is not None
+                    else None
+                ),
+            },
+            "profile_30d": {
+                "battery_behavior": self.battery_behavior.behavior,
+                "behavior_confidence": round(
+                    self.battery_behavior.confidence, 3
+                ),
+                "battery_valid_days": self.battery_days,
+                "voltage_valid_days": self.voltage_days,
+                "temperature_valid_days": self.temperature_days,
+            },
+            "relations": {
+                "battery_voltage": relation_dict(
+                    self.battery_voltage_relation
+                ),
+                "voltage_temperature": relation_dict(
+                    self.voltage_temperature_relation
+                ),
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,3 +374,4 @@ class BatteryHealthSnapshot:
     battery_percent_source: dict[str, str]
     baseline_learning: dict[str, BaselineLearningResult]
     battery_history: dict[str, BatteryHistorySummary] = field(default_factory=dict)
+    telemetry_profiles: dict[str, TelemetryProfile] = field(default_factory=dict)
