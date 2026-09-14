@@ -12,13 +12,13 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.16`**
+**Current development version: `0.1.0-dev.17`**
 
-The repository is in a read-only telemetry, evidence-routing and cycle-integrity
-phase. Discovery starts from Home Assistant Entity Registry entries whose
-`platform` is exactly `mqtt`, then pairs battery percentage, battery voltage,
-`last_seen`, `power_outage_count` and an optional safe same-device temperature
-source.
+The repository is in a read-only telemetry, evidence-routing, cycle-integrity
+and guarded-baseline validation phase. Discovery starts from Home Assistant
+Entity Registry entries whose `platform` is exactly `mqtt`, then pairs battery
+percentage, battery voltage, `last_seen`, `power_outage_count` and an optional
+safe same-device temperature source.
 
 There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
 
@@ -43,6 +43,13 @@ where a new battery cycle may have started and old 7d/30d aggregates must not be
 used for baseline learning without segmentation. Dev16 therefore detects only
 conservative recent regime upshifts; it does not increment a cycle or alter the
 health state.
+
+Dev17 adds guarded baseline v2 in read-only `shadow_no_save` mode. It segments
+long-term daily history at conservative cycle boundaries, excludes pre-cycle
+history, distinguishes `eligible`, `learning`, `blocked` and `not_required`, and
+builds baseline confidence from the weakest required evidence dimension. It does
+not write the baseline Store, increment a battery cycle, or issue a health
+verdict.
 
 ## Cycle integrity
 
@@ -218,11 +225,16 @@ so a voltage-derived percentage is not counted as independent evidence.
 
 ## Baseline status
 
-The baseline Store created during dev7/dev8 is preserved, but current learning
-runs in shadow mode. Existing records are shown as `provisional`; proposed
-learning changes are calculated for diagnostics but are not saved. Baseline
-data must not be used for a health verdict until both evidence routing and cycle
-integrity have been validated against real MQTT device output.
+The baseline Store created during dev7/dev8 is preserved, but current legacy
+learning runs in shadow mode. Existing records are shown as `provisional` and
+must not be used for a health verdict.
+
+Dev17 adds a separate guarded baseline v2 diagnostic path. A voltage baseline is
+considered only for informative voltage channels routed by the Evidence Model.
+Long-term history is segmented by Cycle Integrity before it can contribute to a
+candidate. Current or possible boundaries remain in learning/blocked states,
+while static/context-only voltage is reported as `not_required`. All dev17
+candidates are diagnostic only and `persisted: false`.
 
 Battery percentage still uses the current HA state when it exists. During
 startup, the latest state from the same Recorder query is used only when the
@@ -238,8 +250,8 @@ never skipped.
 5. Add reset-aware 24h `power_outage_count` evidence. ✅ dev11
 6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices. ✅ dev14
 7. Build and validate the evidence-routing model. ✅ dev15
-8. Detect recent battery-cycle boundaries before baseline learning. 🧪 dev16
-9. Re-design guarded baseline learning from cycle-clean evidence.
+8. Detect recent battery-cycle boundaries before baseline learning. ✅ dev16
+9. Re-design guarded baseline learning from cycle-clean evidence. 🧪 dev17
 10. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
