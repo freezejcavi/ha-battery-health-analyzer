@@ -37,7 +37,7 @@ async def _async_get_states(
         window_end,
         entity_ids,
         include_start_time_state=True,
-        significant_changes_only=True,
+        significant_changes_only=False,
         minimal_response=False,
         no_attributes=True,
     )
@@ -50,6 +50,23 @@ async def _async_get_states(
         ]
         for entity_id in entity_ids
     }
+
+
+def _select_last_seen(
+    current_state: State | None,
+    recorder_states: list[State],
+) -> tuple[datetime | None, str]:
+    """Prefer a valid live timestamp, otherwise use latest valid Recorder state."""
+    if current_state is not None:
+        current_last_seen = parse_last_seen(current_state.state)
+        if current_last_seen is not None:
+            return current_last_seen, "current"
+
+    for state in reversed(recorder_states):
+        if (recorded_last_seen := parse_last_seen(state.state)) is not None:
+            return recorded_last_seen, "recorder"
+
+    return None, "unavailable"
 
 
 async def async_get_operability_history(
@@ -80,15 +97,10 @@ async def async_get_operability_history(
             if (parsed := parse_last_seen(state.state)) is not None
         ]
 
-        current_state = hass.states.get(entity_id)
-        if current_state is not None:
-            current_last_seen = parse_last_seen(current_state.state)
-            source = "current" if current_last_seen is not None else "unavailable"
-        else:
-            current_last_seen = (
-                parse_last_seen(states[-1].state) if states else None
-            )
-            source = "recorder" if current_last_seen is not None else "unavailable"
+        current_last_seen, source = _select_last_seen(
+            hass.states.get(entity_id),
+            states,
+        )
 
         freshness[entity_id] = summarize_freshness(
             report_timestamps,
