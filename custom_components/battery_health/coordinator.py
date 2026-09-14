@@ -17,6 +17,8 @@ from .models import (
     LongTermHistorySnapshot,
     TelemetryProfile,
 )
+from .operability import OperabilitySnapshot
+from .operability_recorder import async_get_operability_history
 from .profiler import build_telemetry_profile
 from .recorder import (
     async_get_long_term_history,
@@ -40,6 +42,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         )
         self._baseline_store = BaselineStore(hass)
         self._long_term_history: LongTermHistorySnapshot | None = None
+        self.operability = OperabilitySnapshot({}, {})
 
     async def async_initialize(self) -> None:
         """Load existing persistent state before the first refresh."""
@@ -63,12 +66,28 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             for device in devices
             if device.temperature_entity_id is not None
         )
+        last_seen_entity_ids = sorted(
+            device.last_seen_entity_id
+            for device in devices
+            if device.last_seen_entity_id is not None
+        )
+        outage_entity_ids = sorted(
+            device.outage_entity_id
+            for device in devices
+            if device.outage_entity_id is not None
+        )
         observed_at = dt_util.utcnow()
 
         recorder_history = await async_get_recorder_history(
             self.hass,
             voltage_entity_ids,
             battery_entity_ids,
+            observed_at,
+        )
+        self.operability = await async_get_operability_history(
+            self.hass,
+            last_seen_entity_ids,
+            outage_entity_ids,
             observed_at,
         )
         if self._long_term_history is None:
