@@ -56,6 +56,7 @@ class BatteryHealthDiscoverySensor(
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return compact read-only telemetry diagnostics."""
         snapshot = self.coordinator.data
+        operability = self.coordinator.operability
         devices = snapshot.devices
         device_diagnostics: list[dict[str, Any]] = []
 
@@ -88,6 +89,36 @@ class BatteryHealthDiscoverySensor(
                     else None
                 )
 
+            freshness = (
+                operability.freshness.get(device.last_seen_entity_id)
+                if device.last_seen_entity_id is not None
+                else None
+            )
+            diagnostics["freshness"] = (
+                freshness.as_dict()
+                if freshness is not None
+                else {
+                    "supported": False,
+                    "state": "unavailable",
+                    "issue": None,
+                }
+            )
+
+            outage = (
+                operability.outages.get(device.outage_entity_id)
+                if device.outage_entity_id is not None
+                else None
+            )
+            diagnostics["power_outage"] = (
+                outage.as_dict()
+                if outage is not None
+                else {
+                    "supported": False,
+                    "events_24h": None,
+                    "issue": None,
+                }
+            )
+
             learning_result = snapshot.baseline_learning.get(device.device_id)
             if learning_result is not None:
                 baseline = learning_result.as_dict()
@@ -102,6 +133,22 @@ class BatteryHealthDiscoverySensor(
                 profile.as_dict() if profile is not None else None
             )
             device_diagnostics.append(diagnostics)
+
+        freshness_states = (
+            "fresh",
+            "late",
+            "stale",
+            "insufficient",
+            "invalid",
+            "unavailable",
+        )
+        freshness_state_counts = {
+            state: sum(
+                evidence.state == state
+                for evidence in operability.freshness.values()
+            )
+            for state in freshness_states
+        }
 
         return {
             "scope": "mqtt_integration_only",
@@ -124,5 +171,12 @@ class BatteryHealthDiscoverySensor(
                 for result in snapshot.baseline_learning.values()
             ),
             "profiles_available": len(snapshot.telemetry_profiles),
+            "freshness_supported": len(operability.freshness),
+            "freshness_states": freshness_state_counts,
+            "power_outage_supported": len(operability.outages),
+            "power_outage_events_24h_total": sum(
+                evidence.events_24h or 0
+                for evidence in operability.outages.values()
+            ),
             "devices": device_diagnostics,
         }
