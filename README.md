@@ -12,12 +12,13 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.15`**
+**Current development version: `0.1.0-dev.16`**
 
-The repository is in a read-only telemetry and evidence-routing phase.
-Discovery starts from Home Assistant Entity Registry entries whose `platform`
-is exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
-`power_outage_count` and an optional safe same-device temperature source.
+The repository is in a read-only telemetry, evidence-routing and cycle-integrity
+phase. Discovery starts from Home Assistant Entity Registry entries whose
+`platform` is exactly `mqtt`, then pairs battery percentage, battery voltage,
+`last_seen`, `power_outage_count` and an optional safe same-device temperature
+source.
 
 There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
 
@@ -35,10 +36,52 @@ acts as a gate, battery and voltage are de-duplicated when strongly coupled,
 voltage is classified as `continuous`, `quantized`, `static` or `insufficient`,
 and outage data remains supporting evidence only.
 
+Dev16 adds a read-only Cycle Integrity gate. Real dev15 validation exposed a
+device whose current 24-hour regime was materially above its previous seven-day
+reference in both battery percentage and voltage. That is exactly the situation
+where a new battery cycle may have started and old 7d/30d aggregates must not be
+used for baseline learning without segmentation. Dev16 therefore detects only
+conservative recent regime upshifts; it does not increment a cycle or alter the
+health state.
+
+## Cycle integrity
+
+Each device exposes a `cycle_integrity` diagnostic block. The classifier compares
+its current 24-hour regime with the median of the previous seven complete daily
+p90 values. A boundary is considered probable only when a persistent battery
+upshift and an informative-voltage upshift occur together. A much larger
+single-channel upshift may be marked only as `possible_boundary` when the other
+channel is unavailable or low-information.
+
+Example shape:
+
+```text
+cycle_integrity:
+  state: probable_boundary
+  history_usable: false
+  battery:
+    reference_7d_percent: 65.0
+    reference_days: 7
+    upshift_pp: 35.0
+    signal: persistent_upshift
+  voltage:
+    reference_7d_mv: 2948
+    reference_days: 7
+    upshift_p50_mv: 289.0
+    upshift_floor_mv: 171.0
+    signal: persistent_upshift
+  reasons:
+    - joint_persistent_upshift
+```
+
+The current dev16 thresholds are deliberately conservative diagnostic
+hypotheses. They must be validated against the real MQTT population before any
+persistent battery-cycle change or baseline reset is allowed.
+
 ## Evidence routing
 
-Each discovered device now exposes an `evidence_model` diagnostic block. The
-model answers questions such as:
+Each discovered device exposes an `evidence_model` diagnostic block. The model
+answers questions such as:
 
 - is operability evidence open, limited or blocked by freshness;
 - should battery percentage be interpreted as a level, trend or robust upper
@@ -178,8 +221,8 @@ so a voltage-derived percentage is not counted as independent evidence.
 The baseline Store created during dev7/dev8 is preserved, but current learning
 runs in shadow mode. Existing records are shown as `provisional`; proposed
 learning changes are calculated for diagnostics but are not saved. Baseline
-data must not be used for a health verdict until the profiler and evidence
-model have been validated against real MQTT device output.
+data must not be used for a health verdict until both evidence routing and cycle
+integrity have been validated against real MQTT device output.
 
 Battery percentage still uses the current HA state when it exists. During
 startup, the latest state from the same Recorder query is used only when the
@@ -194,9 +237,10 @@ never skipped.
 4. Add adaptive `last_seen` freshness evidence. ✅ dev11-dev14
 5. Add reset-aware 24h `power_outage_count` evidence. ✅ dev11
 6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices. ✅ dev14
-7. Build and validate the evidence-routing model. 🧪 dev15
-8. Re-design guarded baseline learning from validated evidence.
-9. Expose `ok`, `weakening`, `replace` or `unknown` per device.
+7. Build and validate the evidence-routing model. ✅ dev15
+8. Detect recent battery-cycle boundaries before baseline learning. 🧪 dev16
+9. Re-design guarded baseline learning from cycle-clean evidence.
+10. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 are persisted separately because real validation showed that Recorder is not a
