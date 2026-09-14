@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -81,6 +81,14 @@ class VoltageHistoryPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class BatteryHistoryPoint:
+    """One battery-percentage state transition used by the statistics engine."""
+
+    timestamp: datetime
+    battery_percent: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class VoltageHistorySummary:
     """Compact result of one entity's Recorder window analysis."""
 
@@ -91,18 +99,37 @@ class VoltageHistorySummary:
     latest_voltage_mv: float | None
     source_units: tuple[str, ...] = ()
     issue: str | None = None
+    p10_mv: float | None = None
+    p90_mv: float | None = None
+    min_mv: float | None = None
+    max_mv: float | None = None
+    range_mv: float | None = None
+    value_changes: int = 0
+
+    @property
+    def history_rows(self) -> int:
+        """Return Recorder history rows after timestamp de-duplication."""
+        return self.source_points
 
     def as_dict(self) -> dict[str, Any]:
         """Return rounded diagnostics suitable for an HA state attribute."""
         return {
-            "median_24h_mv": (
+            "p10_24h_mv": round(self.p10_mv) if self.p10_mv is not None else None,
+            "p50_24h_mv": (
                 round(self.median_mv) if self.median_mv is not None else None
+            ),
+            "p90_24h_mv": round(self.p90_mv) if self.p90_mv is not None else None,
+            "min_24h_mv": round(self.min_mv) if self.min_mv is not None else None,
+            "max_24h_mv": round(self.max_mv) if self.max_mv is not None else None,
+            "range_24h_mv": (
+                round(self.range_mv) if self.range_mv is not None else None
             ),
             "coverage_ratio": round(self.coverage_ratio, 3),
             "valid_duration_hours": round(
                 self.valid_duration_seconds / 3600, 2
             ),
-            "source_points": self.source_points,
+            "history_rows": self.history_rows,
+            "value_changes": self.value_changes,
             "latest_voltage_mv": (
                 round(self.latest_voltage_mv)
                 if self.latest_voltage_mv is not None
@@ -114,12 +141,53 @@ class VoltageHistorySummary:
 
 
 @dataclass(frozen=True, slots=True)
+class BatteryHistorySummary:
+    """Compact result of one battery percentage Recorder window."""
+
+    p10_percent: float | None
+    median_percent: float | None
+    p90_percent: float | None
+    min_percent: float | None
+    max_percent: float | None
+    range_percent: float | None
+    coverage_ratio: float
+    valid_duration_seconds: float
+    history_rows: int
+    value_changes: int
+    latest_percent: float | None
+    issue: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return rounded battery diagnostics for an HA state attribute."""
+        def rounded(value: float | None) -> float | None:
+            return round(value, 1) if value is not None else None
+
+        return {
+            "p10_24h_percent": rounded(self.p10_percent),
+            "p50_24h_percent": rounded(self.median_percent),
+            "p90_24h_percent": rounded(self.p90_percent),
+            "min_24h_percent": rounded(self.min_percent),
+            "max_24h_percent": rounded(self.max_percent),
+            "range_24h_percent": rounded(self.range_percent),
+            "coverage_ratio": round(self.coverage_ratio, 3),
+            "valid_duration_hours": round(
+                self.valid_duration_seconds / 3600, 2
+            ),
+            "history_rows": self.history_rows,
+            "value_changes": self.value_changes,
+            "latest_percent": rounded(self.latest_percent),
+            "issue": self.issue,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RecorderHistorySnapshot:
     """Combined result of one voltage and battery Recorder query."""
 
     voltage_history: dict[str, VoltageHistorySummary]
     battery_percent: dict[str, float | None]
     battery_percent_source: dict[str, str]
+    battery_history: dict[str, BatteryHistorySummary] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,3 +257,4 @@ class BatteryHealthSnapshot:
     battery_percent: dict[str, float | None]
     battery_percent_source: dict[str, str]
     baseline_learning: dict[str, BaselineLearningResult]
+    battery_history: dict[str, BatteryHistorySummary] = field(default_factory=dict)
