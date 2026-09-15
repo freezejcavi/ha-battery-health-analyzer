@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.18`**
+**Current development version: `0.1.0-dev.19`**
 
 The repository is in a read-only telemetry, evidence-routing, cycle-integrity
 and guarded-baseline validation phase. Discovery starts from Home Assistant
@@ -27,8 +27,7 @@ Assistant validation showed that timestamp history exposed only one usable state
 in 24 hours while the live MQTT timestamp updated correctly. Dev14 keeps that
 live-learning model and additionally publishes freshness immediately when a
 `last_seen` state changes, without triggering the expensive Recorder/profiler
-refresh. Learned cadence may use the rolling 7-day Store while `reports_24h`
-remains strictly bounded to the previous 24 hours.
+refresh.
 
 Dev15 adds a read-only Evidence Routing Model. It does **not** score battery
 health. Instead it decides how telemetry channels may be used later: freshness
@@ -57,7 +56,16 @@ is derived from the same physical voltage signal. Cycle Integrity now promotes a
 joint persistent upshift to `probable_boundary` only when Evidence Routing has
 classified battery and voltage as independent. Coupled, shared or unknown joint
 upshifts remain quarantined as `possible_boundary`. Guarded baseline v2 also
-blocks learning when voltage interpretation requires temperature context.
+blocks learning when voltage interpretation requires temperature context. Real
+HA validation confirmed both guards.
+
+Dev19 hardens the separate freshness gate after dev18 validation exposed another
+bounded-history effect: high-rate devices could fill the previous 512-point
+cadence Store with only minutes or hours of activity and lose the intended
+seven-day horizon. Cadence retention is now time-balanced to at most one
+representative `last_seen` timestamp per fixed 15-minute bucket. Sparse devices
+remain effectively unchanged while chatty devices retain long real silence gaps
+instead of overweighting bursts of reports.
 
 ## Cycle integrity
 
@@ -146,8 +154,8 @@ sensor.battery_health_analyzer_discovered_devices
 ```
 
 `last_seen` is treated as an operability/freshness gate, not as proof of a
-healthy battery. Diagnostics expose the current age plus device-specific report
-cadence learned from live timestamp changes:
+healthy battery. Diagnostics expose the current age plus device-specific cadence
+learned from live timestamp changes:
 
 ```text
 freshness:
@@ -161,21 +169,30 @@ freshness:
   p90_gap_minutes: 102.0
   age_to_p90_ratio: 0.22
   state: fresh
+  reports_24h_semantics: time_balanced_cadence_points
+  sampling_interval_minutes: 15
 ```
 
 There is deliberately no universal one- or two-hour stale threshold. When at
 least three cadence gaps are available, the current age is compared with that
-device's p90 reporting gap. Until enough live samples are learned, freshness is
+device's p90 learned gap. Until enough live samples are learned, freshness is
 `insufficient`; this is expected after first installation and does not imply a
 battery problem.
 
-The live cadence Store keeps at most 512 timestamps per device with a 7-day
-retention window and uses delayed writes to avoid unnecessary storage churn.
-On integration unload the compact Store is flushed immediately. A valid live
-`last_seen` value is preferred; if live state is temporarily unavailable, the
-latest learned Store timestamp can be used as a fallback. Live `last_seen`
-changes update only the freshness evidence and diagnostic entity; they do not
-launch a full 24h/30d analysis cycle.
+From dev19 the cadence Store keeps at most one representative timestamp per fixed
+15-minute UTC bucket over a seven-day retention window. The 768-point hard cap
+therefore has headroom above the approximately 672 buckets required for seven
+complete days. This time-balancing prevents high-rate motion/presence devices
+from replacing a week of history with only a recent burst while preserving true
+long silence gaps. Existing dev13-dev18 Store data is loaded through the same
+backward-compatible `timestamps` schema and is compacted automatically.
+
+`reports_24h` now means retained **time-balanced cadence points** inside the last
+24 hours, not physical Zigbee packets or raw MQTT reports. It is diagnostic only
+and is not a health evidence weight. A valid live `last_seen` value is preferred;
+if live state is temporarily unavailable, the latest learned Store timestamp can
+be used as a fallback. Live `last_seen` changes update only freshness evidence and
+the diagnostic entity; they do not launch a full 24h/30d analysis cycle.
 
 `power_outage_count` is optional and its absolute value is not health evidence.
 Only reset-aware positive deltas during the previous 24 hours are evaluated:
@@ -266,9 +283,10 @@ never skipped.
 7. Build and validate the evidence-routing model. ✅ dev15
 8. Detect recent battery-cycle boundaries before baseline learning. ✅ dev16
 9. Build guarded baseline v2 from cycle-clean evidence. ✅ dev17
-10. Enforce topology de-duplication and required-temperature guards. 🧪 dev18
-11. Persist verified cycle/baseline state only after real validation.
-12. Expose `ok`, `weakening`, `replace` or `unknown` per device.
+10. Enforce topology de-duplication and required-temperature guards. ✅ dev18
+11. Time-balance bounded cadence history for high-rate devices. 🧪 dev19
+12. Persist verified cycle/baseline state only after real validation.
+13. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 are persisted separately because real validation showed that Recorder is not a
