@@ -2,33 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .cadence_store import CADENCE_SAMPLE_INTERVAL_MINUTES
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
-from .health import (
-    BATTERY_ONLY_LOW_MAX_PERCENT,
-    BATTERY_ONLY_LOW_UPPER_MAX_PERCENT,
-    BATTERY_ONLY_OK_MIN_PERCENT,
-    HEALTH_MIN_COVERAGE,
-    VOLTAGE_OK_RATIO,
-    VOLTAGE_REPLACE_RATIO,
-)
-from .health import (
-    HEALTH_STATES as LEGACY_HEALTH_STATES,
-)
-from .health import (
-    summarize_health_states as summarize_legacy_health_states,
-)
 from .health_v2 import (
     BATTERY_DECLINING_DROP_PP,
     BATTERY_LOW_PERCENT,
@@ -69,6 +59,173 @@ _HEALTH_ICONS = {
 }
 
 
+_LOGGER = logging.getLogger(__name__)
+
+_PUBLIC_REASON = {
+    "ok": "Stable relative to own history",
+    "declining": "Early persistent decline from own history",
+    "weakening": "Material persistent decline from own history",
+    "replace": "Deep persistent decline from own history",
+}
+
+_LIMITATION_NOTES = {
+    "temperature_sensitive_signal_not_normalized": (
+        "Temperature affects the voltage comparison"
+    ),
+    "temperature_sensitive_voltage_bypassed": (
+        "Voltage was bypassed because temperature affects it"
+    ),
+    "cycle_context_limits_escalation": "Battery-cycle context limits escalation",
+    "freshness_not_open": "Freshness evidence is limited",
+    "evidence_not_fully_ready": "Supporting evidence is limited",
+    "low_current_voltage_coverage": "Current voltage history coverage is limited",
+    "low_current_battery_coverage": "Current battery history coverage is limited",
+}
+
+
+def _canonical_health_entity_id(
+    battery_entity_id: str | None,
+    device_id: str,
+) -> str:
+    """Return a short entity ID derived only from the source battery entity."""
+    object_id = ""
+    if battery_entity_id and "." in battery_entity_id:
+        object_id = battery_entity_id.split(".", 1)[1]
+    if object_id.endswith("_battery") and len(object_id) > len("_battery"):
+        object_id = object_id[: -len("_battery")]
+    if not object_id:
+        object_id = f"battery_{device_id[:8]}"
+    return f"sensor.{object_id}_health"
+
+
+def _looks_like_generated_entity_id(entity_id: str, legacy_full_name: str) -> bool:
+    """Return whether an ID still looks system-generated from the old full name."""
+    if "." not in entity_id:
+        return False
+    object_id = entity_id.split(".", 1)[1]
+    legacy_slug = slugify(legacy_full_name)
+    padded = f"_{object_id}_"
+    token = f"_{legacy_slug}_"
+    return (
+        object_id == legacy_slug
+        or object_id.startswith(f"{legacy_slug}_")
+        or object_id.endswith(f"_{legacy_slug}")
+        or token in padded
+    )
+
+
+def _rename_registry_entity_if_generated(
+    registry: er.EntityRegistry,
+    current_entity_id: str | None,
+    target_entity_id: str,
+    legacy_full_name: str,
+) -> bool:
+    """Rename only old generated IDs; preserve explicit user custom IDs."""
+    if current_entity_id is None or current_entity_id == target_entity_id:
+        return False
+    if not _looks_like_generated_entity_id(current_entity_id, legacy_full_name):
+        return False
+    target_entry = registry.async_get(target_entity_id)
+    if target_entry is not None:
+        _LOGGER.warning(
+            "Cannot migrate %s to %s because the target already exists",
+            current_entity_id,
+            target_entity_id,
+        )
+        return False
+    registry.async_update_entity(current_entity_id, new_entity_id=target_entity_id)
+    _LOGGER.info("Migrated entity ID %s -> %s", current_entity_id, target_entity_id)
+    return True
+
+
+def _migrate_health_entity_ids(
+    hass: HomeAssistant, entry: ConfigEntry, devices
+) -> None:
+    """Migrate dev26 generated health IDs to stable source-derived IDs."""
+    registry = er.async_get(hass)
+    for device in devices:
+        unique_id = f"{entry.entry_id}_{device.device_id}_health"
+        current_entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+        target_entity_id = _canonical_health_entity_id(
+            device.battery_entity_id,
+            device.device_id,
+        )
+        display_name = device.device_name or device.device_id[:8]
+        _rename_registry_entity_if_generated(
+            registry,
+            current_entity_id,
+            target_entity_id,
+            f"{display_name} Battery health",
+        )
+
+    summary_unique_id = f"{entry.entry_id}_health_summary"
+    summary_current = registry.async_get_entity_id("sensor", DOMAIN, summary_unique_id)
+    _rename_registry_entity_if_generated(
+        registry,
+        summary_current,
+        "sensor.battery_health_summary",
+        f"{NAME} Summary",
+    )
+
+
+def _public_health_attributes(assessment) -> dict[str, Any]:
+    """Return the compact user-facing explanation for one health state."""
+    if assessment is None or assessment.condition_state not in V2_CONDITION_STATES:
+        return {
+            "trend": "insufficient",
+            "confidence_percent": 0,
+            "calculation": "unavailable",
+            "basis": "unavailable",
+            "reason": "No usable battery telemetry",
+        }
+
+    is_voltage = assessment.signal == "voltage_mv"
+    basis = "voltage" if is_voltage else "battery_percent"
+    unit = "mV" if is_voltage else "%"
+    current = assessment.current_value
+    reference = assessment.reference_used
+    if is_voltage:
+        current_value = round(current) if current is not None else None
+        reference_value = round(reference) if reference is not None else None
+        change = (
+            round((assessment.ratio_to_reference - 1.0) * 100.0, 1)
+            if assessment.ratio_to_reference is not None
+            else None
+        )
+        change_unit = "%"
+    else:
+        current_value = round(current, 1) if current is not None else None
+        reference_value = round(reference, 1) if reference is not None else None
+        change = (
+            round(assessment.delta_from_reference, 1)
+            if assessment.delta_from_reference is not None
+            else None
+        )
+        change_unit = "pp"
+
+    attributes: dict[str, Any] = {
+        "trend": assessment.trend_state,
+        "confidence_percent": round(assessment.confidence * 100),
+        "calculation": assessment.calculation_state,
+        "basis": basis,
+        "current": current_value,
+        "reference": reference_value,
+        "unit": unit,
+        "change_from_reference": change,
+        "change_unit": change_unit,
+        "reason": _PUBLIC_REASON[assessment.condition_state],
+    }
+    if assessment.calculation_state == "limited":
+        notes = [
+            _LIMITATION_NOTES[item]
+            for item in assessment.limitations
+            if item in _LIMITATION_NOTES
+        ]
+        if notes:
+            attributes["note"] = "; ".join(dict.fromkeys(notes))
+    return attributes
+
+
 def _service_device_info(entry: ConfigEntry) -> DeviceInfo:
     """Return the integration-owned service device descriptor."""
     return DeviceInfo(
@@ -85,6 +242,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up diagnostic, summary and per-device health sensors."""
     coordinator: BatteryHealthCoordinator = entry.runtime_data
+    _migrate_health_entity_ids(hass, entry, coordinator.data.devices)
     known_device_ids = {device.device_id for device in coordinator.data.devices}
 
     async_add_entities(
@@ -97,6 +255,7 @@ async def async_setup_entry(
                     coordinator,
                     device.device_id,
                     device.device_name,
+                    device.battery_entity_id,
                 )
                 for device in coordinator.data.devices
             ],
@@ -117,6 +276,7 @@ async def async_setup_entry(
                     coordinator,
                     device.device_id,
                     device.device_name,
+                    device.battery_entity_id,
                 )
             )
         if new_entities:
@@ -141,12 +301,14 @@ class BatteryHealthDeviceSensor(
         coordinator: BatteryHealthCoordinator,
         device_id: str,
         device_name: str | None,
+        battery_entity_id: str | None,
     ) -> None:
         """Initialize one stable per-device health entity."""
         super().__init__(coordinator)
         self._device_id = device_id
         display_name = device_name or device_id[:8]
         self._attr_name = f"{display_name} Battery health"
+        self.entity_id = _canonical_health_entity_id(battery_entity_id, device_id)
         self._attr_unique_id = f"{entry.entry_id}_{device_id}_health"
         self._attr_device_info = _service_device_info(entry)
 
@@ -188,56 +350,9 @@ class BatteryHealthDeviceSensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose compact v2 condition evidence without recording attribute churn."""
+        """Expose only user-facing variable evidence that explains the state."""
         assessment = self.coordinator.health_v2_assessments.get(self._device_id)
-        legacy = self.coordinator.health_assessments.get(self._device_id)
-        device = self._device()
-        if assessment is None:
-            return {
-                "confidence": 0.0,
-                "calculation_state": "unavailable",
-                "trend_state": "insufficient",
-                "assessment_mode": "unavailable",
-                "reasons": ["health_v2_assessment_unavailable"],
-                "limitations": [],
-                "source_device_id": self._device_id,
-            }
-
-        diagnostics = assessment.as_dict()
-        metrics = diagnostics["metrics"]
-        record = self.coordinator.baseline_v2_records.get(self._device_id)
-        return {
-            "confidence": diagnostics["confidence"],
-            "calculation_state": assessment.calculation_state,
-            "trend_state": assessment.trend_state,
-            "assessment_mode": assessment.assessment_mode,
-            "signal": assessment.signal,
-            "current_24h_robust": metrics["current_24h_robust"],
-            "reference_7d": metrics["reference_7d"],
-            "reference_30d": metrics["reference_30d"],
-            "reference_used": metrics["reference_used"],
-            "ratio_to_reference": metrics["ratio_to_reference"],
-            "delta_from_reference": metrics["delta_from_reference"],
-            "recent_vs_previous": metrics["recent_vs_previous"],
-            "reasons": list(assessment.reasons),
-            "limitations": list(assessment.limitations),
-            "cycle_generation": (
-                record.cycle_generation if record is not None else None
-            ),
-            "legacy_dev23_state": (
-                legacy.candidate_state if legacy is not None else None
-            ),
-            "source_device_id": self._device_id,
-            "battery_entity_id": (
-                device.battery_entity_id if device is not None else None
-            ),
-            "voltage_entity_id": (
-                device.voltage_entity_id if device is not None else None
-            ),
-            "temperature_entity_id": (
-                device.temperature_entity_id if device is not None else None
-            ),
-        }
+        return _public_health_attributes(assessment)
 
 
 class BatteryHealthSummarySensor(
@@ -256,6 +371,7 @@ class BatteryHealthSummarySensor(
     ) -> None:
         """Initialize the summary entity."""
         super().__init__(coordinator)
+        self.entity_id = "sensor.battery_health_summary"
         self._attr_unique_id = f"{entry.entry_id}_health_summary"
         self._attr_device_info = _service_device_info(entry)
 
@@ -332,6 +448,8 @@ class BatteryHealthDiscoverySensor(
     _attr_has_entity_name = True
     _attr_name = "Discovered devices"
     _attr_icon = "mdi:battery-search"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
     def __init__(
@@ -375,8 +493,6 @@ class BatteryHealthDiscoverySensor(
             "insufficient": 0,
         }
         persistence_counts: dict[str, int] = {}
-        legacy_health_counts = {state: 0 for state in LEGACY_HEALTH_STATES}
-        legacy_health_paths: dict[str, int] = {}
         health_v2_conditions = {state: 0 for state in V2_CONDITION_STATES}
         health_v2_calculation = {state: 0 for state in V2_CALCULATION_STATES}
         health_v2_trends = {state: 0 for state in V2_TREND_STATES}
@@ -517,25 +633,7 @@ class BatteryHealthDiscoverySensor(
                     persistence_counts.get(persistence.state, 0) + 1
                 )
 
-            health = self.coordinator.health_assessments.get(device.device_id)
-            diagnostics["health_shadow"] = (
-                health.as_dict() if health is not None else None
-            )
-            if health is not None:
-                state = (
-                    health.candidate_state
-                    if health.candidate_state in legacy_health_counts
-                    else "unknown"
-                )
-                legacy_health_counts[state] += 1
-                legacy_health_paths[health.decision_path] = (
-                    legacy_health_paths.get(health.decision_path, 0) + 1
-                )
-
             health_v2 = self.coordinator.health_v2_assessments.get(device.device_id)
-            diagnostics["health_v2_shadow"] = (
-                health_v2.as_dict() if health_v2 is not None else None
-            )
             diagnostics["health"] = (
                 health_v2.as_dict() if health_v2 is not None else None
             )
@@ -571,11 +669,6 @@ class BatteryHealthDiscoverySensor(
             for state in freshness_states
         }
 
-        legacy_summary_state, _legacy_summary_counts = summarize_legacy_health_states(
-            health.candidate_state
-            for health in self.coordinator.health_assessments.values()
-        )
-
         if health_v2_conditions["replace"]:
             health_v2_summary = "replace"
         elif health_v2_conditions["weakening"]:
@@ -587,15 +680,6 @@ class BatteryHealthDiscoverySensor(
         else:
             health_v2_summary = None
 
-        thresholds = {
-            "voltage_ok_ratio": VOLTAGE_OK_RATIO,
-            "voltage_replace_ratio": VOLTAGE_REPLACE_RATIO,
-            "minimum_coverage": HEALTH_MIN_COVERAGE,
-            "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
-            "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
-            "battery_only_low_upper_max_percent": (BATTERY_ONLY_LOW_UPPER_MAX_PERCENT),
-            "battery_only_replace_allowed": False,
-        }
         health_v2_thresholds = {
             "minimum_coverage": V2_MIN_COVERAGE,
             "voltage_declining_ratio": V2_VOLTAGE_DECLINING_RATIO,
@@ -653,22 +737,6 @@ class BatteryHealthDiscoverySensor(
             "health_calculation": health_v2_calculation,
             "health_trends": health_v2_trends,
             "health_modes": health_v2_modes,
-            "legacy_health_summary": legacy_summary_state,
-            "legacy_health_states": legacy_health_counts,
-            "legacy_health_paths": legacy_health_paths,
             "health_thresholds": health_v2_thresholds,
-            "legacy_health_thresholds": thresholds,
-            # Transitional v2 aliases retained for diagnostic compatibility.
-            "health_v2_summary": health_v2_summary,
-            "health_v2_conditions": health_v2_conditions,
-            "health_v2_without_condition": health_v2_no_condition,
-            "health_v2_calculation": health_v2_calculation,
-            "health_v2_trends": health_v2_trends,
-            "health_v2_modes": health_v2_modes,
-            "health_v2_thresholds": health_v2_thresholds,
-            # Retained for parity/history during the transition.
-            "shadow_health_candidates": legacy_health_counts,
-            "shadow_health_paths": legacy_health_paths,
-            "shadow_health_thresholds": thresholds,
             "devices": device_diagnostics,
         }
