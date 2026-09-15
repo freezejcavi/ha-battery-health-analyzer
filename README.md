@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.17`**
+**Current development version: `0.1.0-dev.18`**
 
 The repository is in a read-only telemetry, evidence-routing, cycle-integrity
 and guarded-baseline validation phase. Discovery starts from Home Assistant
@@ -51,14 +51,26 @@ builds baseline confidence from the weakest required evidence dimension. It does
 not write the baseline Store, increment a battery cycle, or issue a health
 verdict.
 
+Dev18 hardens that contract after real dev17 validation exposed a false cycle
+boundary: battery percentage and voltage can move together because the percentage
+is derived from the same physical voltage signal. Cycle Integrity now promotes a
+joint persistent upshift to `probable_boundary` only when Evidence Routing has
+classified battery and voltage as independent. Coupled, shared or unknown joint
+upshifts remain quarantined as `possible_boundary`. Guarded baseline v2 also
+blocks learning when voltage interpretation requires temperature context.
+
 ## Cycle integrity
 
 Each device exposes a `cycle_integrity` diagnostic block. The classifier compares
 its current 24-hour regime with the median of the previous seven complete daily
 p90 values. A boundary is considered probable only when a persistent battery
-upshift and an informative-voltage upshift occur together. A much larger
-single-channel upshift may be marked only as `possible_boundary` when the other
-channel is unavailable or low-information.
+upshift and an informative-voltage upshift occur together **and** Evidence
+Routing has established that those channels are independent. A joint upshift in
+coupled/shared/unknown channels is only `possible_boundary`; it must never count
+the same physical signal twice.
+
+A much larger single-channel upshift may also be marked only as
+`possible_boundary` when the other channel is unavailable or low-information.
 
 Example shape:
 
@@ -78,12 +90,12 @@ cycle_integrity:
     upshift_floor_mv: 171.0
     signal: persistent_upshift
   reasons:
-    - joint_persistent_upshift
+    - independent_joint_persistent_upshift
 ```
 
-The current dev16 thresholds are deliberately conservative diagnostic
-hypotheses. They must be validated against the real MQTT population before any
-persistent battery-cycle change or baseline reset is allowed.
+The thresholds remain deliberately conservative diagnostic hypotheses. They must
+continue to be validated against the real MQTT population before any persistent
+battery-cycle change or baseline reset is allowed.
 
 ## Evidence routing
 
@@ -229,12 +241,14 @@ The baseline Store created during dev7/dev8 is preserved, but current legacy
 learning runs in shadow mode. Existing records are shown as `provisional` and
 must not be used for a health verdict.
 
-Dev17 adds a separate guarded baseline v2 diagnostic path. A voltage baseline is
+Guarded baseline v2 is a separate diagnostic path. A voltage baseline is
 considered only for informative voltage channels routed by the Evidence Model.
 Long-term history is segmented by Cycle Integrity before it can contribute to a
 candidate. Current or possible boundaries remain in learning/blocked states,
-while static/context-only voltage is reported as `not_required`. All dev17
-candidates are diagnostic only and `persisted: false`.
+static/context-only voltage is reported as `not_required`, and
+`temperature_context: required` blocks voltage baseline learning until that
+context can be safely applied. All candidates remain diagnostic only and
+`persisted: false`.
 
 Battery percentage still uses the current HA state when it exists. During
 startup, the latest state from the same Recorder query is used only when the
@@ -251,8 +265,10 @@ never skipped.
 6. Validate live-learned cadence and persistence on real Zigbee2MQTT devices. ✅ dev14
 7. Build and validate the evidence-routing model. ✅ dev15
 8. Detect recent battery-cycle boundaries before baseline learning. ✅ dev16
-9. Re-design guarded baseline learning from cycle-clean evidence. 🧪 dev17
-10. Expose `ok`, `weakening`, `replace` or `unknown` per device.
+9. Build guarded baseline v2 from cycle-clean evidence. ✅ dev17
+10. Enforce topology de-duplication and required-temperature guards. 🧪 dev18
+11. Persist verified cycle/baseline state only after real validation.
+12. Expose `ok`, `weakening`, `replace` or `unknown` per device.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 are persisted separately because real validation showed that Recorder is not a
