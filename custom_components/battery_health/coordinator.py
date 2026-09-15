@@ -26,6 +26,7 @@ from .evidence import (
     classify_voltage_information,
 )
 from .ha_discovery import async_discover_battery_devices
+from .health import ShadowHealthAssessment, assess_shadow_health
 from .models import (
     BaselineLearningResult,
     BatteryHealthSnapshot,
@@ -50,7 +51,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
-    """Coordinate telemetry analysis and guarded baseline v2 persistence."""
+    """Coordinate telemetry analysis, health assessment and guarded persistence."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
@@ -72,6 +73,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity: dict[str, CycleIntegrity] = {}
         self.baseline_v2_assessments: dict[str, BaselineV2Assessment] = {}
         self.baseline_v2_persistence: dict[str, BaselineV2PersistenceResult] = {}
+        self.health_assessments: dict[str, ShadowHealthAssessment] = {}
 
     @property
     def baseline_v2_records(self) -> dict[str, BaselineV2Record]:
@@ -93,7 +95,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         *,
         persist: bool,
     ) -> BaselineV2PersistenceResult | None:
-        """Evaluate evidence, cycle integrity and guarded baseline for one device."""
+        """Evaluate evidence, cycle, baseline and health for one device."""
         long_term = self._long_term_history
         if long_term is None:
             return None
@@ -159,15 +161,30 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity[device.device_id] = cycle_integrity
         self.baseline_v2_assessments[device.device_id] = assessment
 
-        if not persist:
-            return None
+        persistence: BaselineV2PersistenceResult | None = None
+        if persist:
+            persistence = self._baseline_v2_store.apply(
+                device.device_id,
+                assessment,
+                observed_at,
+            )
+            self.baseline_v2_persistence[device.device_id] = persistence
 
-        persistence = self._baseline_v2_store.apply(
-            device.device_id,
+        persisted_record = self._baseline_v2_store.records.get(device.device_id)
+        self.health_assessments[device.device_id] = assess_shadow_health(
+            battery_history,
+            voltage_history,
+            profile,
+            evidence_model,
+            cycle_integrity,
             assessment,
-            observed_at,
+            persisted_baseline_mv=(
+                persisted_record.baseline_mv if persisted_record is not None else None
+            ),
+            persisted_baseline_confidence=(
+                persisted_record.confidence if persisted_record is not None else None
+            ),
         )
-        self.baseline_v2_persistence[device.device_id] = persistence
         return persistence
 
     @callback
@@ -416,6 +433,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity = {}
         self.baseline_v2_assessments = {}
         self.baseline_v2_persistence = {}
+        self.health_assessments = {}
         for device in devices:
             profile = telemetry_profiles.get(device.device_id)
             if profile is None:

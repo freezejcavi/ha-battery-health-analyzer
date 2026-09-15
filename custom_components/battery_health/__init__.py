@@ -27,7 +27,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload Battery Health Analyzer platforms."""
+    """Unload platforms, then cleanly stop coordinator-owned resources."""
     from homeassistant.const import Platform
 
-    return await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR])
+    unload_ok = await hass.config_entries.async_unload_platforms(
+        entry,
+        [Platform.SENSOR],
+    )
+    if unload_ok:
+        await entry.runtime_data.async_shutdown()
+    return unload_ok

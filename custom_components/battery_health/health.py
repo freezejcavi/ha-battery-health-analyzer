@@ -1,12 +1,13 @@
-"""Pure shadow health assessment for Battery Health Analyzer.
+"""Pure health assessment for Battery Health Analyzer.
 
-This module deliberately does not publish a Home Assistant health entity and does
-not mutate persistent state. It turns the already-guarded evidence model into a
-candidate state for real-world calibration.
+The classifier remains side-effect free. Dev23 publishes the already-validated
+assessment through Home Assistant entities, while persistence and cycle state stay
+owned by their dedicated layers.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from .cycle import CycleIntegrity
 from .evidence import EvidenceModel
 from .models import BatteryHistorySummary, TelemetryProfile, VoltageHistorySummary
 
+HEALTH_STATES = ("ok", "weakening", "replace", "unknown")
 VOLTAGE_OK_RATIO = 0.91
 VOLTAGE_REPLACE_RATIO = 0.87
 HEALTH_MIN_COVERAGE = 0.80
@@ -28,7 +30,7 @@ BATTERY_ONLY_MATERIAL_DROP_PP = 15.0
 
 @dataclass(frozen=True, slots=True)
 class ShadowHealthAssessment:
-    """One non-published candidate health decision."""
+    """One conservative health decision produced by the validated classifier."""
 
     candidate_state: str
     confidence: float
@@ -41,9 +43,9 @@ class ShadowHealthAssessment:
     limitations: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        """Return transparent diagnostics for calibration."""
+        """Return transparent diagnostics for calibration and production parity."""
         return {
-            "mode": "shadow_no_publish",
+            "mode": "published_classifier",
             "candidate_state": self.candidate_state,
             "confidence": round(self.confidence, 3),
             "decision_path": self.decision_path,
@@ -70,6 +72,30 @@ class ShadowHealthAssessment:
             "reasons": list(self.reasons),
             "limitations": list(self.limitations),
         }
+
+
+def summarize_health_states(states: Iterable[str]) -> tuple[str, dict[str, int]]:
+    """Return actionable aggregate state plus normalized state counts.
+
+    Actionable states outrank uncertainty: replace > weakening > unknown > ok.
+    Unknown or unexpected input values are conservatively counted as unknown.
+    """
+    counts = {state: 0 for state in HEALTH_STATES}
+    for state in states:
+        normalized = state if state in counts else "unknown"
+        counts[normalized] += 1
+
+    if counts["replace"]:
+        summary = "replace"
+    elif counts["weakening"]:
+        summary = "weakening"
+    elif counts["unknown"]:
+        summary = "unknown"
+    elif counts["ok"]:
+        summary = "ok"
+    else:
+        summary = "unknown"
+    return summary, counts
 
 
 def _unknown(
@@ -121,7 +147,7 @@ def assess_shadow_health(
     persisted_baseline_mv: float | None,
     persisted_baseline_confidence: float | None,
 ) -> ShadowHealthAssessment:
-    """Return a conservative health candidate without publishing a verdict.
+    """Return a conservative health decision from already-guarded evidence.
 
     Voltage-baseline decisions use the current 24-hour p90 against the guarded
     persisted baseline. Battery-only evidence can identify a low-confidence OK

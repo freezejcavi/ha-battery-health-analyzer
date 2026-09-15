@@ -12,27 +12,31 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.22`**
+**Current development version: `0.1.0-dev.23`**
 
-Dev21 introduced a **read-only shadow health engine** for calibration. It exposes
-candidate `ok`, `weakening`, `replace` or `unknown` states only inside the
-existing diagnostic sensor. These candidates are not production health entities,
-do not write any health state to Home Assistant Store and do not alter guarded
-baseline or cycle persistence.
+Dev21 introduced a read-only shadow health classifier and real Home Assistant
+validation on the complete 31-device MQTT population produced
+`19 ok / 1 weakening / 0 replace / 11 unknown`. All 31 devices were simultaneously
+`fresh`, Evidence Routing `ready` and current Cycle Integrity `stable`. The single
+`weakening` candidate was `Teplota_Mrazák`; low/volatile shared signals without a
+healthy anchor stayed `unknown` as intended.
 
-Real dev21 Home Assistant validation on the complete 31-device MQTT population
-produced `19 ok / 1 weakening / 0 replace / 11 unknown`. All 31 devices were
-simultaneously `fresh`, Evidence Routing `ready` and current Cycle Integrity
-`stable`. The single `weakening` candidate was `Teplota_Mrazák`; low/volatile
-shared signals without a healthy anchor, including `Venkovní_sensor`, stayed
-`unknown` as intended.
+Dev22 hardened temperature-source discovery and has now also been accepted on the
+real 31-device population. Temperature ambiguity fell to zero. Regular measured
+`*_temperature` is selected ahead of Zigbee2MQTT diagnostic
+`*_device_temperature` when both exist. This exposed the expected strong
+voltage-to-temperature relationship on `Venkovní_sensor` (`temperature_context:
+required`), so its guarded baseline is blocked rather than learned. The health
+state distribution remained `19 / 1 / 0 / 11`, confirming that the safety fix did
+not make classification more aggressive.
 
-Dev22 hardens temperature-source discovery before any production health verdict.
-When both a regular same-device `*_temperature` measurement and Zigbee2MQTT's
-diagnostic `*_device_temperature` are present, the exact regular sibling is
-preferred. Diagnostic device temperature remains a safe fallback when it is the
-only temperature candidate; unrelated equally plausible temperature sources stay
-ambiguous. Dev22 does **not** change health thresholds, persistence or cycle logic.
+Dev23 promotes that validated classifier **unchanged** to Home Assistant entities.
+The health calculation now runs once in the coordinator and is consumed both by
+diagnostics and by production sensors; there is no second copy of classification
+logic in the entity layer. Dev23 adds one enum health sensor per discovered MQTT
+battery device plus one aggregate summary sensor. Health attributes are exposed
+for transparency but excluded from Recorder attribute history to avoid database
+churn. Newly discovered MQTT battery devices get health entities dynamically.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -46,13 +50,13 @@ per fixed 15-minute UTC bucket, preventing high-rate devices from collapsing the
 intended seven-day horizon. Real dev19 validation produced 31/31 `fresh`, 31/31
 Evidence Routing `ready` and 31/31 current Cycle Integrity `stable` devices.
 
-Dev15 introduced read-only Evidence Routing. Dev16 added Cycle Integrity. Dev17
-added guarded baseline-v2 assessment and historical cycle segmentation. Dev18
-hardened both layers after real validation exposed double-counting of coupled
-battery percentage and voltage plus a missing required-temperature guard.
+Dev15 introduced Evidence Routing. Dev16 added Cycle Integrity. Dev17 added
+guarded baseline-v2 assessment and historical cycle segmentation. Dev18 hardened
+both layers after real validation exposed double-counting of coupled battery
+percentage and voltage plus a missing required-temperature guard.
 
-Dev20 moves Evidence Routing, Cycle Integrity and guarded baseline-v2 assessment
-out of the diagnostic sensor and into the coordinator, then adds a **separate**
+Dev20 moved Evidence Routing, Cycle Integrity and guarded baseline-v2 assessment
+out of the diagnostic sensor and into the coordinator, then added a **separate**
 guarded Store at `battery_health.baselines_v2`. The older dev7/dev8 Store remains
 untouched and provisional. Only an `eligible` v2 assessment may create or alter a
 v2 record. `learning`, `blocked` and `not_required` assessments never delete or
@@ -60,14 +64,43 @@ rewrite an existing v2 record. Real Home Assistant acceptance including an
 explicit integration reload confirmed seven stored generation-1 records survived
 the unload/load roundtrip unchanged.
 
-## Shadow health engine
+## Published health entities
 
-Dev21 deliberately separates **candidate classification** from a future
-production health verdict. The shadow result is exposed per device as
-`health_shadow` and includes the candidate state, confidence, decision path,
-metrics, reasons and limitations.
+Each discovered MQTT battery device gets one enum sensor with these states:
 
-Safety gates run before any candidate classification:
+- `ok`
+- `weakening`
+- `replace`
+- `unknown`
+
+The entity uses Home Assistant's enum sensor model. The health entity is a primary
+entity, not a diagnostic entity. Its unique ID is based on the config entry plus
+the stable Home Assistant `device_id`; no `default_entity_id` or per-device manual
+override is used.
+
+Per-device health attributes include confidence, decision path, robust health
+metrics, reasons, limitations, current guarded cycle generation and source entity
+references. These attributes remain visible in the current state but are marked
+unrecorded so only meaningful health-state transitions need Recorder history.
+
+The aggregate `Summary` sensor uses actionable precedence:
+
+```text
+replace > weakening > unknown > ok
+```
+
+This means a real `weakening` or `replace` condition is not hidden merely because
+some other devices are conservatively `unknown`. Summary attributes expose counts
+for all four states plus device lists needing attention.
+
+The legacy diagnostic `health_shadow` block is retained for one transition
+release as a parity surface. In dev23 it is no longer independently calculated;
+it mirrors the exact coordinator assessment used by the published health entity.
+Its `mode` is therefore `published_classifier`.
+
+## Health engine
+
+Safety gates run before any classification:
 
 - Evidence Routing must be `ready` and freshness must be `open` or `caution`;
 - current Cycle Integrity must be `stable`;
@@ -79,39 +112,37 @@ Safety gates run before any candidate classification:
   intentionally `unknown` rather than falling back to the same battery percentage
   signal under another name.
 
-For a guarded persisted continuous voltage baseline, the shadow engine compares
-the robust **24-hour voltage p90** with the stored baseline:
+For a guarded persisted continuous voltage baseline, the engine compares the
+robust **24-hour voltage p90** with the stored baseline:
 
-- ratio >= `0.91` -> shadow `ok`;
-- ratio >= `0.87` and < `0.91` -> shadow `weakening`;
-- ratio < `0.87` -> shadow `replace`.
+- ratio >= `0.91` -> `ok`;
+- ratio >= `0.87` and < `0.91` -> `weakening`;
+- ratio < `0.87` -> `replace`.
 
 The voltage path uses 24h p90 rather than an instantaneous value or p50 to reduce
 sensitivity to transient load dips. Confidence is bounded by persisted baseline
-confidence, voltage-information confidence and current Recorder coverage. These
-thresholds remain calibration hypotheses until the temperature-source hardening
-is revalidated on the real population.
+confidence, voltage-information confidence and current Recorder coverage.
 
 Battery-only fallback is intentionally weaker:
 
 - a stable/high robust battery level (currently >= 75%) may become low-confidence
-  shadow `ok`;
+  `ok`;
 - a persistently low battery level (24h robust level <= 30% and 7d upper envelope
-  <= 35%) with monotonic/mixed decline may become shadow `weakening`;
+  <= 35%) with monotonic/mixed decline may become `weakening`;
 - mid-range, uncorroborated low or otherwise insufficiently calibrated battery-only
   evidence remains `unknown`;
-- **battery-only evidence can never produce `replace` in the current shadow model**.
+- **battery-only evidence can never produce `replace` in the current model**.
 
 `power_outage_count` remains supporting evidence only. It never creates a health
 state by itself; while its health weight is still uncalibrated, an outage signal
-that conflicts with an otherwise `ok` candidate is conservatively returned as
+that conflicts with an otherwise `ok` state is conservatively returned as
 `unknown`.
 
-Example diagnostic shape:
+Example diagnostic mirror:
 
 ```text
 health_shadow:
-  mode: shadow_no_publish
+  mode: published_classifier
   candidate_state: ok
   confidence: 0.65
   decision_path: voltage_baseline
@@ -126,15 +157,15 @@ health_shadow:
   limitations: []
 ```
 
-Top-level diagnostics also expose `shadow_health_candidates`,
-`shadow_health_paths` and the current calibration thresholds. No new user-facing
-health entity exists in dev22.
+Top-level diagnostics expose `health_summary`, `health_states`, `health_paths` and
+`health_thresholds`. The older `shadow_health_*` top-level keys remain for one
+release and point to the same coordinator results.
 
 ## Temperature source selection
 
-Temperature context is optional evidence but can block voltage-baseline learning
-when a strong voltage-to-temperature relationship is observed. Source identity is
-therefore safety-relevant.
+Temperature context can block voltage-baseline learning when a strong
+voltage-to-temperature relationship is observed, so source identity is
+safety-relevant.
 
 Zigbee2MQTT distinguishes the regular `temperature` expose (measured temperature)
 from `device_temperature`, which is diagnostic device telemetry. Dev22 uses that
@@ -216,8 +247,8 @@ of creating a new cycle.
 ## Evidence routing
 
 Each discovered device exposes an `evidence_model` diagnostic block. The model
-decides how telemetry may be used later; it does not itself score battery health.
-It determines:
+decides how telemetry may be used; it does not itself score battery health. It
+determines:
 
 - whether freshness leaves decision evidence open, limited or blocked;
 - whether battery percentage behaves as a level, trend, robust upper envelope or
@@ -258,20 +289,20 @@ freshness:
 ```
 
 There is deliberately no universal one- or two-hour stale threshold. When at
-least three cadence gaps are available, current age is compared with the
-learned device-specific p90 gap.
+least three cadence gaps are available, current age is compared with the learned
+device-specific p90 gap.
 
-From dev19 the cadence Store keeps at most one representative timestamp per
-fixed 15-minute UTC bucket over a seven-day retention window. The 768-point hard
-cap leaves headroom above the approximately 672 buckets needed for seven complete
-days. Existing dev13-dev18 `timestamps` data is loaded through the same schema
-and compacted automatically.
+From dev19 the cadence Store keeps at most one representative timestamp per fixed
+15-minute UTC bucket over a seven-day retention window. The 768-point hard cap
+leaves headroom above the approximately 672 buckets needed for seven complete
+days. Existing dev13-dev18 `timestamps` data is loaded through the same schema and
+compacted automatically.
 
-`reports_24h` means retained **time-balanced cadence points**, not physical
-Zigbee packets or raw MQTT reports. It is diagnostic only and is not a health
-weight. Live `last_seen` changes immediately refresh freshness and the derived
-evidence/cycle/baseline assessment, but do not write the baseline-v2 Store or
-launch a full Recorder/profiler cycle.
+`reports_24h` means retained **time-balanced cadence points**, not physical Zigbee
+or MQTT packet count. It is diagnostic only and is not a health weight. Live
+`last_seen` changes immediately refresh freshness and the derived
+evidence/cycle/baseline/health assessment, but do not write the baseline-v2 Store
+or launch a full Recorder/profiler cycle.
 
 `power_outage_count` is optional. Its absolute value is not health evidence; only
 reset-aware positive deltas during the previous 24 hours are supporting evidence.
@@ -310,9 +341,9 @@ temperature source after the dev22 preference rules above.
 ## Legacy baseline status
 
 The baseline Store created during dev7/dev8 is preserved for diagnostics only.
-Its records remain `provisional`; legacy learning stays `shadow_no_save` and
-must not feed the health engine. Dev20 does not migrate, overwrite or delete
-those records.
+Its records remain `provisional`; legacy learning stays `shadow_no_save` and must
+not feed the health engine. Dev20 does not migrate, overwrite or delete those
+records.
 
 ## Architecture status
 
@@ -329,12 +360,13 @@ those records.
 11. Time-balance bounded cadence history for high-rate devices. ✅ dev19
 12. Persist and reload guarded cycle/baseline-v2 state without downward learning. ✅ dev20
 13. Build and validate a read-only shadow health classifier. ✅ dev21
-14. Prefer regular measured temperature over diagnostic device temperature and revalidate temperature context. 🧪 dev22
-15. Publish validated per-device `ok` / `weakening` / `replace` / `unknown` health entities.
+14. Prefer regular measured temperature over diagnostic device temperature and revalidate temperature context. ✅ dev22
+15. Publish coordinator-backed per-device and aggregate health entities. 🧪 dev23
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 and guarded baseline-v2 records are persisted because they represent learned
 state that cannot be reconstructed reliably from one current Recorder window.
+Health state itself is derived and is therefore not stored separately.
 
 ## Local verification
 
@@ -343,11 +375,10 @@ python -m unittest discover -s tests -v
 python -m compileall custom_components tests
 ```
 
-Dev22 adds focused regression tests for regular-temperature preference, diagnostic
-`device_temperature` fallback and preservation of true temperature ambiguity. The
-current development tooling still does not provide a working repository clone,
-so the full suite has not been physically executed here; real Home Assistant
-output remains the acceptance gate for dev22.
+Dev23 adds pure tests for summary-state precedence and keeps all earlier classifier
+and temperature-source tests. The current development tooling still does not
+provide a working repository clone/runtime for physically executing the full
+suite, so real Home Assistant output remains the acceptance gate for dev23.
 
 ## Compatibility target
 
