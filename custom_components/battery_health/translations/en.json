@@ -3,13 +3,9 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up Battery Health Analyzer",
-        "description": "Create one read-only discovery instance. No source entity or device will be changed."
+        "title": "Set up battery health analysis",
+        "description": "Create the single Battery Health Analyzer instance for MQTT battery devices."
       }
-    },
-    "abort": {
-      "single_instance_allowed": "Battery Health Analyzer is already configured."
     }
   }
 }
-

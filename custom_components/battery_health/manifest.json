@@ -1,13 +1,18 @@
 {
   "domain": "battery_health",
   "name": "Battery Health Analyzer",
-  "codeowners": ["@freezejcavi"],
+  "codeowners": [
+    "@freezejcavi"
+  ],
   "config_flow": true,
-  "dependencies": ["recorder"],
+  "dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/freezejcavi/ha-battery-health-analyzer",
   "integration_type": "helper",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/freezejcavi/ha-battery-health-analyzer/issues",
   "requirements": [],
-  "version": "0.1.0-dev.25"
+  "version": "0.1.0-dev.26",
+  "single_config_entry": true
 }

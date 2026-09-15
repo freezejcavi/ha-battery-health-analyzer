@@ -19,9 +19,6 @@ class BatteryHealthConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Create the single integration instance."""
-        if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
-
         if user_input is not None:
             return self.async_create_entry(title=NAME, data={})
 
