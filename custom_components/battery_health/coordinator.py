@@ -26,7 +26,6 @@ from .evidence import (
     classify_voltage_information,
 )
 from .ha_discovery import async_discover_battery_devices
-from .health import ShadowHealthAssessment, assess_shadow_health
 from .health_v2 import RelativeHealthAssessment, assess_relative_health_v2
 from .models import (
     BaselineLearningResult,
@@ -94,7 +93,6 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity: dict[str, CycleIntegrity] = {}
         self.baseline_v2_assessments: dict[str, BaselineV2Assessment] = {}
         self.baseline_v2_persistence: dict[str, BaselineV2PersistenceResult] = {}
-        self.health_assessments: dict[str, ShadowHealthAssessment] = {}
         self.health_v2_assessments: dict[str, RelativeHealthAssessment] = {}
 
     @property
@@ -117,7 +115,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         *,
         persist: bool,
     ) -> BaselineV2PersistenceResult | None:
-        """Evaluate evidence, cycle, baseline and both health models for one device."""
+        """Evaluate evidence, cycle, baseline and the production health model."""
         long_term = self._long_term_history
         if long_term is None:
             return None
@@ -198,18 +196,6 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         )
         persisted_confidence = (
             persisted_record.confidence if persisted_record is not None else None
-        )
-
-        # Retain the dev23 classifier only as a temporary legacy diagnostic mirror.
-        self.health_assessments[device.device_id] = assess_shadow_health(
-            battery_history,
-            voltage_history,
-            profile,
-            evidence_model,
-            cycle_integrity,
-            assessment,
-            persisted_baseline_mv=persisted_mv,
-            persisted_baseline_confidence=persisted_confidence,
         )
 
         # Health Model v2 is the production condition model. It consumes the same
@@ -478,7 +464,6 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity = {}
         self.baseline_v2_assessments = {}
         self.baseline_v2_persistence = {}
-        self.health_assessments = {}
         self.health_v2_assessments = {}
         for device in devices:
             profile = telemetry_profiles.get(device.device_id)
