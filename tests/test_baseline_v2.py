@@ -32,14 +32,20 @@ def info(kind: str = "continuous") -> VoltageInformation:
     return VoltageInformation(kind, 1.0, 30, 20 if kind == "continuous" else 1, 300, 1)
 
 
-def evidence(*, voltage_role: str = "primary", readiness: str = "ready") -> EvidenceModel:
+def evidence(
+    *,
+    voltage_role: str = "primary",
+    readiness: str = "ready",
+    topology: str = "independent",
+    temperature_context: str = "optional",
+) -> EvidenceModel:
     return EvidenceModel(
         freshness_gate="open", decision_readiness=readiness,
         battery_role="primary", battery_processing="level",
         voltage_role=voltage_role, voltage_information=info(),
-        battery_voltage_topology="independent", temperature_context="optional",
+        battery_voltage_topology=topology, temperature_context=temperature_context,
         outage_role="neutral", independent_condition_channels=2,
-        double_count_guard=False,
+        double_count_guard=topology != "independent",
     )
 
 
@@ -53,7 +59,7 @@ def integrity(state: str = "stable") -> CycleIntegrity:
         voltage_upshift_p50_mv=289 if state == "probable_boundary" else 0,
         voltage_upshift_floor_mv=171 if state == "probable_boundary" else 0,
         voltage_signal="persistent_upshift" if state == "probable_boundary" else "normal",
-        reasons=("joint_persistent_upshift",) if state == "probable_boundary" else (),
+        reasons=("independent_joint_persistent_upshift",) if state == "probable_boundary" else (),
     )
 
 
@@ -117,6 +123,43 @@ class BaselineV2Tests(unittest.TestCase):
         self.assertEqual(result.eligibility, "eligible")
         self.assertEqual(result.anchor, "observed_cycle_boundary")
         self.assertEqual(result.candidate_mv, 3200)
+
+    def test_coupled_historical_joint_upshift_is_quarantined(self) -> None:
+        battery_daily = {}
+        voltage_daily = {}
+        for day in range(1, 8):
+            key = f"2026-09-{day:02d}"
+            battery_daily[key] = battery(60)
+            voltage_daily[key] = voltage(2900)
+        for day in range(8, 13):
+            key = f"2026-09-{day:02d}"
+            battery_daily[key] = battery(100)
+            voltage_daily[key] = voltage(3200, p10=3150)
+        result = assess_guarded_baseline_v2(
+            battery_daily,
+            voltage_daily,
+            voltage(3200, p10=3150),
+            evidence(topology="coupled"),
+            integrity(),
+            info(),
+        )
+        self.assertEqual(result.cycle_segment.state, "possible_boundary")
+        self.assertEqual(result.eligibility, "blocked")
+        self.assertIn("cycle_segment_blocked", result.limitations)
+
+    def test_required_temperature_context_blocks_baseline(self) -> None:
+        battery_daily = {f"2026-09-{day:02d}": battery(100) for day in range(1, 8)}
+        voltage_daily = {f"2026-09-{day:02d}": voltage(3040 + day) for day in range(1, 8)}
+        result = assess_guarded_baseline_v2(
+            battery_daily,
+            voltage_daily,
+            voltage(3047),
+            evidence(temperature_context="required"),
+            integrity(),
+            info(),
+        )
+        self.assertEqual(result.eligibility, "blocked")
+        self.assertIn("temperature_context_required", result.limitations)
 
 
 if __name__ == "__main__":
