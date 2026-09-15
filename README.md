@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.24`**
+**Current development version: `0.1.0-dev.25`**
 
 Dev21 introduced a read-only shadow health classifier and real Home Assistant
 validation on the complete 31-device MQTT population produced
@@ -48,9 +48,12 @@ Health Model v2 therefore separates:
 - trend: `stable / falling / recovering / volatile / insufficient`;
 - confidence and assessment mode.
 
-The dev23 production entities remain unchanged during dev24. The v2 model is
-published only inside diagnostics as `health_v2_shadow` until the complete real
-MQTT population is reviewed.
+Real dev24 validation on all 31 MQTT devices produced `25 ok / 5 declining /
+1 weakening / 0 replace`, `health_v2_without_condition = 0`, 28 `ready` and 3
+explicitly `limited` calculations. All former 11 production `unknown` cases became
+calculable conditions without introducing any new `weakening` or `replace` state.
+Dev25 therefore promotes Health Model v2 to the existing production entity IDs.
+The dev23 classifier remains available only as a temporary legacy diagnostic mirror.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -80,14 +83,13 @@ the unload/load roundtrip unchanged.
 
 ## Published health entities
 
-The currently published dev23 entity contract remains intentionally unchanged
-while dev24 is shadow-tested. Each discovered MQTT battery device has one enum
-sensor with these production states:
+Dev25 publishes Health Model v2 through the existing per-device entity IDs. Each
+discovered MQTT battery device has one enum sensor with these production states:
 
 - `ok`
+- `declining`
 - `weakening`
 - `replace`
-- `unknown`
 
 The entity uses Home Assistant's enum sensor model. The health entity is a primary
 entity, not a diagnostic entity. Its unique ID is based on the config entry plus
@@ -99,16 +101,18 @@ metrics, reasons, limitations, current guarded cycle generation and source entit
 references. These attributes remain visible in the current state but are marked
 unrecorded so only meaningful health-state transitions need Recorder history.
 
-The aggregate `Summary` sensor currently uses dev23 actionable precedence:
+The aggregate `Summary` sensor uses v2 actionable precedence:
 
 ```text
-replace > weakening > unknown > ok
+replace > weakening > declining > ok
 ```
 
-No production entity state or automation contract changes in dev24 until the new
-relative model has passed real-data acceptance.
+If an individual condition truly cannot be calculated, that entity is Home
+Assistant `unavailable`; `unknown` is not a battery-condition state. Summary stays
+available while at least one device has a calculable condition and exposes an
+`unavailable_devices` list.
 
-## Health Model v2 shadow (dev24)
+## Health Model v2 (dev25 production)
 
 The v2 model uses the **best available condition signal relative to the device's
 own history**. Instantaneous values are diagnostic context, not the primary
@@ -187,7 +191,7 @@ A null v2 condition is allowed only when neither current battery percentage nor
 voltage provides a usable condition signal. That case is reported separately as
 `calculation_state: unavailable`; it is not a battery-condition category.
 
-## Dev23 production health engine
+## Legacy dev23 classifier (temporary diagnostic mirror)
 
 The current production classifier is retained during dev24 as the comparison
 control. Its safety gates run before classification:

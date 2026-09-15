@@ -1,8 +1,8 @@
 """Relative-history Health Model v2 for Battery Health Analyzer.
 
-Dev24 keeps this model read-only and diagnostic. The production dev23 classifier
-remains unchanged until the relative model has been validated on the real MQTT
-population.
+Dev25 promotes this model to the existing production health entities after real
+validation on the complete MQTT population. The dev23 classifier is retained only
+as a temporary legacy diagnostic mirror.
 
 Battery condition and measurement quality are deliberately separate. A calculable
 device gets a condition even when confidence is limited; only a device with no
@@ -11,7 +11,7 @@ usable current condition signal is ``calculation_state: unavailable``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import Any
@@ -25,13 +25,32 @@ CONDITION_STATES = ("ok", "declining", "weakening", "replace")
 CALCULATION_STATES = ("ready", "limited", "unavailable")
 TREND_STATES = ("stable", "falling", "recovering", "volatile", "insufficient")
 
+
+def summarize_condition_states(
+    states: Iterable[str | None],
+) -> tuple[str | None, dict[str, int], int]:
+    """Summarize v2 conditions with actionable precedence and availability count."""
+    counts = {state: 0 for state in CONDITION_STATES}
+    unavailable = 0
+    for state in states:
+        if state in counts:
+            counts[state] += 1
+        else:
+            unavailable += 1
+
+    for state in ("replace", "weakening", "declining", "ok"):
+        if counts[state]:
+            return state, counts, unavailable
+    return None, counts, unavailable
+
+
 MIN_COVERAGE = 0.80
 MIN_REFERENCE_DAYS = 3
 READY_REFERENCE_DAYS = 7
 REFERENCE_TOP_DAYS = 3
 TREND_BLOCK_DAYS = 3
 
-# Shadow calibration hypotheses. ``declining`` is informational and therefore
+# Calibration hypotheses. ``declining`` is informational and therefore
 # intentionally starts much earlier than an actionable weakening/replace state.
 VOLTAGE_DECLINING_RATIO = 0.98
 VOLTAGE_WEAKENING_RATIO = 0.94
@@ -53,7 +72,7 @@ BATTERY_RECOVERING_BLOCK_PP = 2.0
 
 @dataclass(frozen=True, slots=True)
 class RelativeHealthAssessment:
-    """One read-only Health Model v2 assessment."""
+    """One Health Model v2 assessment."""
 
     condition_state: str | None
     calculation_state: str
