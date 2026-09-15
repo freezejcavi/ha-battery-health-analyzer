@@ -232,6 +232,12 @@ class BaselineV2Store:
             BASELINE_V2_STORAGE_KEY,
         )
         self.records: dict[str, BaselineV2Record] = {}
+        self._dirty = False
+
+    @property
+    def dirty(self) -> bool:
+        """Return whether in-memory records still need a successful Store write."""
+        return self._dirty
 
     async def async_load(self) -> None:
         """Load valid v2 records without importing legacy baseline state."""
@@ -246,6 +252,7 @@ class BaselineV2Store:
                 self.records[device_id] = BaselineV2Record.from_storage_dict(data)
             except (KeyError, TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid guarded baseline v2 for %s", device_id)
+        self._dirty = False
 
     def apply(
         self,
@@ -261,10 +268,13 @@ class BaselineV2Store:
         )
         if result.changed and result.record is not None:
             self.records[device_id] = result.record
+            self._dirty = True
         return result
 
     async def async_save(self) -> None:
-        """Persist the complete compact v2 snapshot."""
+        """Persist the complete compact v2 snapshot and clear dirty on success."""
+        if not self._dirty:
+            return
         await self._store.async_save(
             {
                 "devices": {
@@ -273,3 +283,4 @@ class BaselineV2Store:
                 }
             }
         )
+        self._dirty = False
