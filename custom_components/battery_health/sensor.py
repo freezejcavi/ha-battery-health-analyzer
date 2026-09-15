@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .baseline_v2 import assess_guarded_baseline_v2
+from .cadence_store import CADENCE_SAMPLE_INTERVAL_MINUTES
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
 from .cycle import assess_cycle_integrity
@@ -121,7 +122,7 @@ class BatteryHealthDiscoverySensor(
                 if device.last_seen_entity_id is not None
                 else None
             )
-            diagnostics["freshness"] = (
+            freshness_diagnostics = (
                 freshness.as_dict()
                 if freshness is not None
                 else {
@@ -130,6 +131,13 @@ class BatteryHealthDiscoverySensor(
                     "issue": None,
                 }
             )
+            freshness_diagnostics["reports_24h_semantics"] = (
+                "time_balanced_cadence_points"
+            )
+            freshness_diagnostics["sampling_interval_minutes"] = (
+                CADENCE_SAMPLE_INTERVAL_MINUTES
+            )
+            diagnostics["freshness"] = freshness_diagnostics
 
             outage = (
                 operability.outages.get(device.outage_entity_id)
@@ -266,6 +274,7 @@ class BatteryHealthDiscoverySensor(
             ),
             "profiles_available": len(snapshot.telemetry_profiles),
             "freshness_supported": len(operability.freshness),
+            "cadence_sampling_minutes": CADENCE_SAMPLE_INTERVAL_MINUTES,
             "freshness_states": freshness_state_counts,
             "power_outage_supported": len(operability.outages),
             "power_outage_events_24h_total": sum(

@@ -14,13 +14,27 @@ from .operability import parse_last_seen
 CADENCE_STORAGE_KEY = "battery_health.cadence"
 CADENCE_STORAGE_VERSION = 1
 CADENCE_RETENTION = timedelta(days=7)
-CADENCE_MAX_SAMPLES = 512
+CADENCE_SAMPLE_INTERVAL_MINUTES = 15
+CADENCE_SAMPLE_INTERVAL = timedelta(minutes=CADENCE_SAMPLE_INTERVAL_MINUTES)
+# Seven complete days need at most 7 * 24 * 4 = 672 time-balanced points.
+# Keep modest headroom without allowing chatty devices to collapse the horizon.
+CADENCE_MAX_SAMPLES = 768
 CADENCE_SAVE_DELAY_SECONDS = 300
 FUTURE_TOLERANCE = timedelta(minutes=5)
 
 
+def _bucket_index(timestamp: datetime) -> int:
+    """Return the fixed UTC cadence bucket for one aware timestamp."""
+    return int(timestamp.timestamp()) // int(CADENCE_SAMPLE_INTERVAL.total_seconds())
+
+
 class CadenceStore:
-    """Keep compact rolling last-seen timestamps learned from live state changes."""
+    """Keep compact rolling last-seen timestamps learned from live state changes.
+
+    The Store retains at most one representative timestamp per 15-minute bucket.
+    This prevents high-rate devices from filling the bounded Store with only a
+    few recent minutes while preserving real longer silence gaps for freshness.
+    """
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the Home Assistant Store wrapper."""
@@ -59,17 +73,20 @@ class CadenceStore:
         timestamps: list[datetime],
         observed_at: datetime,
     ) -> list[datetime]:
-        """Return sorted, unique, recent samples bounded for storage."""
+        """Return recent time-balanced representative cadence points."""
         cutoff = observed_at - CADENCE_RETENTION
         future_limit = observed_at + FUTURE_TOLERANCE
-        unique = sorted(
-            {
-                timestamp
-                for timestamp in timestamps
-                if cutoff <= timestamp <= future_limit
-            }
-        )
-        return unique[-CADENCE_MAX_SAMPLES:]
+        latest_by_bucket: dict[int, datetime] = {}
+        for timestamp in timestamps:
+            if not cutoff <= timestamp <= future_limit:
+                continue
+            bucket = _bucket_index(timestamp)
+            previous = latest_by_bucket.get(bucket)
+            if previous is None or timestamp > previous:
+                latest_by_bucket[bucket] = timestamp
+
+        samples = sorted(latest_by_bucket.values())
+        return samples[-CADENCE_MAX_SAMPLES:]
 
     @callback
     def observe(
@@ -83,12 +100,19 @@ class CadenceStore:
         normalized = parse_last_seen(timestamp)
         if normalized is None:
             return False
+        if not now - CADENCE_RETENTION <= normalized <= now + FUTURE_TOLERANCE:
+            return False
 
-        samples = self._sanitize(
-            [*self._timestamps.get(device_id, []), normalized],
-            now,
-        )
         previous = self._timestamps.get(device_id, [])
+        # Fast path for chatty devices: update only the current bucket's latest
+        # representative instead of repeatedly sorting the full rolling window.
+        if previous and _bucket_index(previous[-1]) == _bucket_index(normalized):
+            if normalized <= previous[-1]:
+                return False
+            samples = [*previous[:-1], normalized]
+        else:
+            samples = self._sanitize([*previous, normalized], now)
+
         if samples == previous:
             return False
 
