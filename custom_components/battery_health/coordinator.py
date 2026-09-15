@@ -416,22 +416,19 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.cycle_integrity = {}
         self.baseline_v2_assessments = {}
         self.baseline_v2_persistence = {}
-        store_changed = False
         for device in devices:
             profile = telemetry_profiles.get(device.device_id)
             if profile is None:
                 continue
-            persistence = self._evaluate_device_decision(
+            self._evaluate_device_decision(
                 device,
                 snapshot,
                 profile,
                 observed_at,
                 persist=True,
             )
-            if persistence is not None and persistence.changed:
-                store_changed = True
 
-        if store_changed:
+        if self._baseline_v2_store.dirty:
             await self._baseline_v2_store.async_save()
 
         return snapshot
