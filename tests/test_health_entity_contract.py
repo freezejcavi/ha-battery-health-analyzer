@@ -1,20 +1,21 @@
-"""Static contract checks for dev23 published health entities."""
+"""Static contract checks for dev25 published Health Model v2 entities."""
 
 from __future__ import annotations
 
 import unittest
 
-from custom_components.battery_health.health import HEALTH_STATES
+from custom_components.battery_health.health_v2 import CONDITION_STATES
 
 
 class HealthEntityContractTests(unittest.TestCase):
-    """Keep the public state contract intentionally small and stable."""
+    """Keep the public condition contract intentionally small and stable."""
 
-    def test_public_health_states_are_exactly_four(self) -> None:
+    def test_public_health_states_are_exactly_four_without_unknown(self) -> None:
         self.assertEqual(
-            HEALTH_STATES,
-            ("ok", "weakening", "replace", "unknown"),
+            CONDITION_STATES,
+            ("ok", "declining", "weakening", "replace"),
         )
+        self.assertNotIn("unknown", CONDITION_STATES)
 
 
 if __name__ == "__main__":

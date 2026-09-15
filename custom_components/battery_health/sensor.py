@@ -20,10 +20,10 @@ from .health import (
     BATTERY_ONLY_LOW_UPPER_MAX_PERCENT,
     BATTERY_ONLY_OK_MIN_PERCENT,
     HEALTH_MIN_COVERAGE,
-    HEALTH_STATES,
+    HEALTH_STATES as LEGACY_HEALTH_STATES,
     VOLTAGE_OK_RATIO,
     VOLTAGE_REPLACE_RATIO,
-    summarize_health_states,
+    summarize_health_states as summarize_legacy_health_states,
 )
 from .health_v2 import (
     BATTERY_DECLINING_DROP_PP,
@@ -38,6 +38,7 @@ from .health_v2 import (
 )
 from .health_v2 import (
     CONDITION_STATES as V2_CONDITION_STATES,
+    summarize_condition_states,
 )
 from .health_v2 import (
     MIN_COVERAGE as V2_MIN_COVERAGE,
@@ -57,6 +58,7 @@ from .health_v2 import (
 
 _HEALTH_ICONS = {
     "ok": "mdi:battery-check",
+    "declining": "mdi:battery-arrow-down-outline",
     "weakening": "mdi:battery-alert",
     "replace": "mdi:battery-alert-variant-outline",
     "unknown": "mdi:battery-unknown",
@@ -125,7 +127,7 @@ class BatteryHealthDeviceSensor(
     """Publish the validated health state for one discovered MQTT battery device."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(HEALTH_STATES)
+    _attr_options = list(V2_CONDITION_STATES)
     _attr_has_entity_name = False
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
@@ -156,28 +158,42 @@ class BatteryHealthDeviceSensor(
         )
 
     @property
-    def native_value(self) -> str:
-        """Return the dev23 production state unchanged during dev24 shadowing."""
-        assessment = self.coordinator.health_assessments.get(self._device_id)
-        if assessment is None or assessment.candidate_state not in HEALTH_STATES:
-            return "unknown"
-        return assessment.candidate_state
+    def available(self) -> bool:
+        """Expose HA unavailable only when the v2 condition cannot be calculated."""
+        assessment = self.coordinator.health_v2_assessments.get(self._device_id)
+        return (
+            assessment is not None
+            and assessment.calculation_state != "unavailable"
+            and assessment.condition_state in V2_CONDITION_STATES
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the promoted Health Model v2 condition."""
+        assessment = self.coordinator.health_v2_assessments.get(self._device_id)
+        if assessment is None or assessment.condition_state not in V2_CONDITION_STATES:
+            return None
+        return assessment.condition_state
 
     @property
     def icon(self) -> str:
-        """Return an icon matching the current production health state."""
-        return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
+        """Return an icon matching the current v2 production condition."""
+        value = self.native_value
+        return _HEALTH_ICONS.get(value, _HEALTH_ICONS["unknown"])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose compact decision evidence without recording attribute churn."""
-        assessment = self.coordinator.health_assessments.get(self._device_id)
+        """Expose compact v2 condition evidence without recording attribute churn."""
+        assessment = self.coordinator.health_v2_assessments.get(self._device_id)
+        legacy = self.coordinator.health_assessments.get(self._device_id)
         device = self._device()
         if assessment is None:
             return {
                 "confidence": 0.0,
-                "decision_path": "unavailable",
-                "reasons": ["health_assessment_unavailable"],
+                "calculation_state": "unavailable",
+                "trend_state": "insufficient",
+                "assessment_mode": "unavailable",
+                "reasons": ["health_v2_assessment_unavailable"],
                 "limitations": [],
                 "source_device_id": self._device_id,
             }
@@ -187,15 +203,24 @@ class BatteryHealthDeviceSensor(
         record = self.coordinator.baseline_v2_records.get(self._device_id)
         return {
             "confidence": diagnostics["confidence"],
-            "decision_path": assessment.decision_path,
-            "voltage_health_ratio": metrics["voltage_health_ratio"],
-            "battery_level_percent": metrics["battery_level_percent"],
-            "baseline_mv": metrics["baseline_mv"],
-            "current_voltage_p90_mv": metrics["current_voltage_p90_mv"],
+            "calculation_state": assessment.calculation_state,
+            "trend_state": assessment.trend_state,
+            "assessment_mode": assessment.assessment_mode,
+            "signal": assessment.signal,
+            "current_24h_robust": metrics["current_24h_robust"],
+            "reference_7d": metrics["reference_7d"],
+            "reference_30d": metrics["reference_30d"],
+            "reference_used": metrics["reference_used"],
+            "ratio_to_reference": metrics["ratio_to_reference"],
+            "delta_from_reference": metrics["delta_from_reference"],
+            "recent_vs_previous": metrics["recent_vs_previous"],
             "reasons": list(assessment.reasons),
             "limitations": list(assessment.limitations),
             "cycle_generation": (
                 record.cycle_generation if record is not None else None
+            ),
+            "legacy_dev23_state": (
+                legacy.candidate_state if legacy is not None else None
             ),
             "source_device_id": self._device_id,
             "battery_entity_id": (
@@ -216,7 +241,7 @@ class BatteryHealthSummarySensor(
     """Publish the aggregate actionable dev23 battery-health state."""
 
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(HEALTH_STATES)
+    _attr_options = list(V2_CONDITION_STATES)
     _attr_has_entity_name = True
     _attr_name = "Summary"
     _unrecorded_attributes = frozenset({MATCH_ALL})
@@ -229,53 +254,68 @@ class BatteryHealthSummarySensor(
         self._attr_unique_id = f"{entry.entry_id}_health_summary"
         self._attr_device_info = _service_device_info(entry)
 
-    def _state_by_device(self) -> list[tuple[str, str]]:
-        """Return current production health state paired with a readable name."""
-        result: list[tuple[str, str]] = []
+    def _state_by_device(self) -> list[tuple[str | None, str]]:
+        """Return v2 production conditions paired with readable device names."""
+        result: list[tuple[str | None, str]] = []
         for device in self.coordinator.data.devices:
-            assessment = self.coordinator.health_assessments.get(device.device_id)
+            assessment = self.coordinator.health_v2_assessments.get(device.device_id)
             state = (
-                assessment.candidate_state
+                assessment.condition_state
                 if assessment is not None
-                and assessment.candidate_state in HEALTH_STATES
-                else "unknown"
+                and assessment.calculation_state != "unavailable"
+                and assessment.condition_state in V2_CONDITION_STATES
+                else None
             )
             result.append((state, device.device_name or device.device_id[:8]))
         return result
 
     @property
-    def native_value(self) -> str:
-        """Return the highest actionable aggregate production state."""
-        state, _counts = summarize_health_states(
-            state for state, _name in self._state_by_device()
+    def available(self) -> bool:
+        """Keep Summary available while at least one device has a v2 condition."""
+        state, _counts, _unavailable = summarize_condition_states(
+            current for current, _name in self._state_by_device()
+        )
+        return state is not None
+
+    @property
+    def native_value(self) -> str | None:
+        """Return replace > weakening > declining > ok across available devices."""
+        state, _counts, _unavailable = summarize_condition_states(
+            current for current, _name in self._state_by_device()
         )
         return state
 
     @property
     def icon(self) -> str:
-        """Return an icon matching the aggregate production state."""
+        """Return an icon matching the aggregate v2 production condition."""
         return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose compact production-state counts and attention lists."""
+        """Expose v2 condition counts, availability and attention lists."""
         state_by_device = self._state_by_device()
-        _state, counts = summarize_health_states(
-            state for state, _name in state_by_device
+        _state, counts, unavailable = summarize_condition_states(
+            current for current, _name in state_by_device
         )
         names_by_state = {
             state: [name for current, name in state_by_device if current == state]
-            for state in HEALTH_STATES
+            for state in V2_CONDITION_STATES
         }
+        unavailable_devices = [
+            name for current, name in state_by_device if current is None
+        ]
         return {
             "total": len(state_by_device),
+            "available": len(state_by_device) - unavailable,
+            "unavailable": unavailable,
             "ok": counts["ok"],
+            "declining": counts["declining"],
             "weakening": counts["weakening"],
             "replace": counts["replace"],
-            "unknown": counts["unknown"],
             "replace_devices": names_by_state["replace"],
             "weakening_devices": names_by_state["weakening"],
-            "unknown_devices": names_by_state["unknown"],
+            "declining_devices": names_by_state["declining"],
+            "unavailable_devices": unavailable_devices,
         }
 
 
@@ -330,8 +370,8 @@ class BatteryHealthDiscoverySensor(
             "insufficient": 0,
         }
         persistence_counts: dict[str, int] = {}
-        health_counts = {state: 0 for state in HEALTH_STATES}
-        health_paths: dict[str, int] = {}
+        legacy_health_counts = {state: 0 for state in LEGACY_HEALTH_STATES}
+        legacy_health_paths: dict[str, int] = {}
         health_v2_conditions = {state: 0 for state in V2_CONDITION_STATES}
         health_v2_calculation = {state: 0 for state in V2_CALCULATION_STATES}
         health_v2_trends = {state: 0 for state in V2_TREND_STATES}
@@ -479,16 +519,19 @@ class BatteryHealthDiscoverySensor(
             if health is not None:
                 state = (
                     health.candidate_state
-                    if health.candidate_state in health_counts
+                    if health.candidate_state in legacy_health_counts
                     else "unknown"
                 )
-                health_counts[state] += 1
-                health_paths[health.decision_path] = (
-                    health_paths.get(health.decision_path, 0) + 1
+                legacy_health_counts[state] += 1
+                legacy_health_paths[health.decision_path] = (
+                    legacy_health_paths.get(health.decision_path, 0) + 1
                 )
 
             health_v2 = self.coordinator.health_v2_assessments.get(device.device_id)
             diagnostics["health_v2_shadow"] = (
+                health_v2.as_dict() if health_v2 is not None else None
+            )
+            diagnostics["health"] = (
                 health_v2.as_dict() if health_v2 is not None else None
             )
             if health_v2 is not None:
@@ -523,7 +566,7 @@ class BatteryHealthDiscoverySensor(
             for state in freshness_states
         }
 
-        summary_state, _summary_counts = summarize_health_states(
+        legacy_summary_state, _legacy_summary_counts = summarize_legacy_health_states(
             health.candidate_state
             for health in self.coordinator.health_assessments.values()
         )
@@ -597,9 +640,14 @@ class BatteryHealthDiscoverySensor(
             "cycle_segments": cycle_segment_counts,
             "baseline_v2_persisted_records": len(self.coordinator.baseline_v2_records),
             "baseline_v2_persistence": persistence_counts,
-            "health_summary": summary_state,
-            "health_states": health_counts,
-            "health_paths": health_paths,
+            "health_summary": health_v2_summary,
+            "health_states": {**health_v2_conditions, "unavailable": health_v2_no_condition},
+            "health_calculation": health_v2_calculation,
+            "health_trends": health_v2_trends,
+            "health_modes": health_v2_modes,
+            "legacy_health_summary": legacy_summary_state,
+            "legacy_health_states": legacy_health_counts,
+            "legacy_health_paths": legacy_health_paths,
             "health_thresholds": thresholds,
             # Dev24 shadow model; production entities remain on the dev23 model.
             "health_v2_summary": health_v2_summary,
@@ -610,8 +658,8 @@ class BatteryHealthDiscoverySensor(
             "health_v2_modes": health_v2_modes,
             "health_v2_thresholds": health_v2_thresholds,
             # Retained for parity/history during the transition.
-            "shadow_health_candidates": health_counts,
-            "shadow_health_paths": health_paths,
+            "shadow_health_candidates": legacy_health_counts,
+            "shadow_health_paths": legacy_health_paths,
             "shadow_health_thresholds": thresholds,
             "devices": device_diagnostics,
         }

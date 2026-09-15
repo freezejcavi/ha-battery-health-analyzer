@@ -11,7 +11,7 @@ usable current condition signal is ``calculation_state: unavailable``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import Any
@@ -24,6 +24,25 @@ from .models import BatteryHistorySummary, VoltageHistorySummary
 CONDITION_STATES = ("ok", "declining", "weakening", "replace")
 CALCULATION_STATES = ("ready", "limited", "unavailable")
 TREND_STATES = ("stable", "falling", "recovering", "volatile", "insufficient")
+
+
+def summarize_condition_states(
+    states: Iterable[str | None],
+) -> tuple[str | None, dict[str, int], int]:
+    """Summarize v2 conditions with actionable precedence and availability count."""
+    counts = {state: 0 for state in CONDITION_STATES}
+    unavailable = 0
+    for state in states:
+        if state in counts:
+            counts[state] += 1
+        else:
+            unavailable += 1
+
+    for state in ("replace", "weakening", "declining", "ok"):
+        if counts[state]:
+            return state, counts, unavailable
+    return None, counts, unavailable
+
 
 MIN_COVERAGE = 0.80
 MIN_REFERENCE_DAYS = 3
