@@ -139,8 +139,10 @@ def _voltage_score(
     )
 
 
-def _temperature_score(entity: EntityDescriptor) -> int | None:
-    """Select only an unambiguous actual temperature measurement."""
+def _temperature_score(
+    entity: EntityDescriptor, source_base: str | None
+) -> int | None:
+    """Prefer the regular measured temperature over diagnostic device temperature."""
     if entity.domain != "sensor" or entity.device_class != "temperature":
         return None
 
@@ -156,6 +158,7 @@ def _temperature_score(entity: EntityDescriptor) -> int | None:
     if any(token in text for token in excluded):
         return None
 
+    object_id = entity.entity_id.partition(".")[2]
     has_temperature_unit = entity.unit in {
         "°C",
         "C",
@@ -165,7 +168,20 @@ def _temperature_score(entity: EntityDescriptor) -> int | None:
         "fahrenheit",
     }
     ends_temperature = entity.entity_id.endswith("_temperature")
-    return 100 + 20 * has_temperature_unit + 10 * ends_temperature
+    is_regular_sibling = (
+        source_base is not None and object_id == f"{source_base}_temperature"
+    )
+
+    # Zigbee2MQTT exposes `device_temperature` as diagnostic device telemetry,
+    # while the regular `temperature` expose is the actual measured temperature.
+    # Prefer the exact regular sibling when both exist, but keep device temperature
+    # as a usable fallback when it is the only safe same-device candidate.
+    return (
+        100
+        + 80 * is_regular_sibling
+        + 20 * has_temperature_unit
+        + 10 * ends_temperature
+    )
 
 
 def _last_seen_score(entity: EntityDescriptor) -> int | None:
@@ -220,7 +236,10 @@ def discover_battery_devices(
             device_entities,
             lambda entity: _voltage_score(entity, source_base),
         )
-        temperature = _select_best(device_entities, _temperature_score)
+        temperature = _select_best(
+            device_entities,
+            lambda entity: _temperature_score(entity, source_base),
+        )
         last_seen = _select_best(device_entities, _last_seen_score)
         outage = _select_best(device_entities, _outage_score)
 
