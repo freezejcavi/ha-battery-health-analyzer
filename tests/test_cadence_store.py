@@ -21,14 +21,14 @@ class CadenceStoreTests(unittest.TestCase):
 
     def test_keeps_latest_point_per_fixed_bucket(self) -> None:
         points = [
-            self.end - timedelta(minutes=29),
+            self.end - timedelta(minutes=31),
             self.end - timedelta(minutes=25),
             self.end - timedelta(minutes=16),
         ]
         result = CadenceStore._sanitize(points, self.end)
 
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], self.end - timedelta(minutes=25))
+        self.assertEqual(result[0], self.end - timedelta(minutes=31))
         self.assertEqual(result[1], self.end - timedelta(minutes=16))
 
     def test_chatty_seven_day_history_fits_without_collapsing_horizon(self) -> None:
