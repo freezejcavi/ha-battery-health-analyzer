@@ -25,6 +25,35 @@ from .health import (
     VOLTAGE_REPLACE_RATIO,
     summarize_health_states,
 )
+from .health_v2 import (
+    BATTERY_DECLINING_DROP_PP,
+    BATTERY_LOW_PERCENT,
+    BATTERY_REPLACE_7D_PERCENT,
+    BATTERY_REPLACE_PERCENT,
+    BATTERY_STRONG_DECLINE_DROP_PP,
+    BATTERY_WEAKENING_DROP_PP,
+)
+from .health_v2 import (
+    CALCULATION_STATES as V2_CALCULATION_STATES,
+)
+from .health_v2 import (
+    CONDITION_STATES as V2_CONDITION_STATES,
+)
+from .health_v2 import (
+    MIN_COVERAGE as V2_MIN_COVERAGE,
+)
+from .health_v2 import (
+    TREND_STATES as V2_TREND_STATES,
+)
+from .health_v2 import (
+    VOLTAGE_DECLINING_RATIO as V2_VOLTAGE_DECLINING_RATIO,
+)
+from .health_v2 import (
+    VOLTAGE_REPLACE_RATIO as V2_VOLTAGE_REPLACE_RATIO,
+)
+from .health_v2 import (
+    VOLTAGE_WEAKENING_RATIO as V2_VOLTAGE_WEAKENING_RATIO,
+)
 
 _HEALTH_ICONS = {
     "ok": "mdi:battery-check",
@@ -128,7 +157,7 @@ class BatteryHealthDeviceSensor(
 
     @property
     def native_value(self) -> str:
-        """Return ok / weakening / replace / unknown."""
+        """Return the dev23 production state unchanged during dev24 shadowing."""
         assessment = self.coordinator.health_assessments.get(self._device_id)
         if assessment is None or assessment.candidate_state not in HEALTH_STATES:
             return "unknown"
@@ -136,7 +165,7 @@ class BatteryHealthDeviceSensor(
 
     @property
     def icon(self) -> str:
-        """Return an icon matching the current health state."""
+        """Return an icon matching the current production health state."""
         return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
 
     @property
@@ -184,7 +213,7 @@ class BatteryHealthDeviceSensor(
 class BatteryHealthSummarySensor(
     CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
 ):
-    """Publish the aggregate actionable battery-health state."""
+    """Publish the aggregate actionable dev23 battery-health state."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(HEALTH_STATES)
@@ -201,7 +230,7 @@ class BatteryHealthSummarySensor(
         self._attr_device_info = _service_device_info(entry)
 
     def _state_by_device(self) -> list[tuple[str, str]]:
-        """Return current health state paired with a readable device name."""
+        """Return current production health state paired with a readable name."""
         result: list[tuple[str, str]] = []
         for device in self.coordinator.data.devices:
             assessment = self.coordinator.health_assessments.get(device.device_id)
@@ -216,7 +245,7 @@ class BatteryHealthSummarySensor(
 
     @property
     def native_value(self) -> str:
-        """Return the highest actionable aggregate state."""
+        """Return the highest actionable aggregate production state."""
         state, _counts = summarize_health_states(
             state for state, _name in self._state_by_device()
         )
@@ -224,12 +253,12 @@ class BatteryHealthSummarySensor(
 
     @property
     def icon(self) -> str:
-        """Return an icon matching the aggregate state."""
+        """Return an icon matching the aggregate production state."""
         return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose compact state counts and attention lists."""
+        """Expose compact production-state counts and attention lists."""
         state_by_device = self._state_by_device()
         _state, counts = summarize_health_states(
             state for state, _name in state_by_device
@@ -303,14 +332,19 @@ class BatteryHealthDiscoverySensor(
         persistence_counts: dict[str, int] = {}
         health_counts = {state: 0 for state in HEALTH_STATES}
         health_paths: dict[str, int] = {}
+        health_v2_conditions = {state: 0 for state in V2_CONDITION_STATES}
+        health_v2_calculation = {state: 0 for state in V2_CALCULATION_STATES}
+        health_v2_trends = {state: 0 for state in V2_TREND_STATES}
+        health_v2_modes: dict[str, int] = {}
+        health_v2_no_condition = 0
 
         for device in devices:
             diagnostics = device.as_dict()
             diagnostics["battery_percent_now"] = snapshot.battery_percent.get(
                 device.device_id
             )
-            diagnostics["battery_percent_source"] = (
-                snapshot.battery_percent_source.get(device.device_id)
+            diagnostics["battery_percent_source"] = snapshot.battery_percent_source.get(
+                device.device_id
             )
 
             battery_history = (
@@ -320,9 +354,7 @@ class BatteryHealthDiscoverySensor(
             )
             if device.battery_entity_id is not None:
                 diagnostics["battery_history"] = (
-                    battery_history.as_dict()
-                    if battery_history is not None
-                    else None
+                    battery_history.as_dict() if battery_history is not None else None
                 )
 
             voltage_history = (
@@ -332,9 +364,7 @@ class BatteryHealthDiscoverySensor(
             )
             if device.voltage_entity_id is not None:
                 diagnostics["voltage_history"] = (
-                    voltage_history.as_dict()
-                    if voltage_history is not None
-                    else None
+                    voltage_history.as_dict() if voltage_history is not None else None
                 )
 
             freshness = (
@@ -421,7 +451,9 @@ class BatteryHealthDiscoverySensor(
                         "persisted": device.device_id
                         in self.coordinator.baseline_v2_records,
                         "record": (
-                            self.coordinator.baseline_v2_records[device.device_id].as_dict()
+                            self.coordinator.baseline_v2_records[
+                                device.device_id
+                            ].as_dict()
                             if device.device_id in self.coordinator.baseline_v2_records
                             else None
                         ),
@@ -455,6 +487,25 @@ class BatteryHealthDiscoverySensor(
                     health_paths.get(health.decision_path, 0) + 1
                 )
 
+            health_v2 = self.coordinator.health_v2_assessments.get(device.device_id)
+            diagnostics["health_v2_shadow"] = (
+                health_v2.as_dict() if health_v2 is not None else None
+            )
+            if health_v2 is not None:
+                if health_v2.condition_state in health_v2_conditions:
+                    health_v2_conditions[health_v2.condition_state] += 1
+                else:
+                    health_v2_no_condition += 1
+                calc = health_v2.calculation_state
+                if calc in health_v2_calculation:
+                    health_v2_calculation[calc] += 1
+                trend = health_v2.trend_state
+                if trend in health_v2_trends:
+                    health_v2_trends[trend] += 1
+                health_v2_modes[health_v2.assessment_mode] = (
+                    health_v2_modes.get(health_v2.assessment_mode, 0) + 1
+                )
+
             device_diagnostics.append(diagnostics)
 
         freshness_states = (
@@ -467,8 +518,7 @@ class BatteryHealthDiscoverySensor(
         )
         freshness_state_counts = {
             state: sum(
-                evidence.state == state
-                for evidence in operability.freshness.values()
+                evidence.state == state for evidence in operability.freshness.values()
             )
             for state in freshness_states
         }
@@ -478,16 +528,39 @@ class BatteryHealthDiscoverySensor(
             for health in self.coordinator.health_assessments.values()
         )
 
+        if health_v2_conditions["replace"]:
+            health_v2_summary = "replace"
+        elif health_v2_conditions["weakening"]:
+            health_v2_summary = "weakening"
+        elif health_v2_conditions["declining"]:
+            health_v2_summary = "declining"
+        elif health_v2_conditions["ok"]:
+            health_v2_summary = "ok"
+        else:
+            health_v2_summary = None
+
         thresholds = {
             "voltage_ok_ratio": VOLTAGE_OK_RATIO,
             "voltage_replace_ratio": VOLTAGE_REPLACE_RATIO,
             "minimum_coverage": HEALTH_MIN_COVERAGE,
             "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
             "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
-            "battery_only_low_upper_max_percent": (
-                BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
-            ),
+            "battery_only_low_upper_max_percent": (BATTERY_ONLY_LOW_UPPER_MAX_PERCENT),
             "battery_only_replace_allowed": False,
+        }
+        health_v2_thresholds = {
+            "minimum_coverage": V2_MIN_COVERAGE,
+            "voltage_declining_ratio": V2_VOLTAGE_DECLINING_RATIO,
+            "voltage_weakening_ratio": V2_VOLTAGE_WEAKENING_RATIO,
+            "voltage_replace_ratio": V2_VOLTAGE_REPLACE_RATIO,
+            "battery_declining_drop_pp": BATTERY_DECLINING_DROP_PP,
+            "battery_strong_decline_drop_pp": BATTERY_STRONG_DECLINE_DROP_PP,
+            "battery_weakening_drop_pp": BATTERY_WEAKENING_DROP_PP,
+            "battery_low_percent_support": BATTERY_LOW_PERCENT,
+            "battery_replace_percent_support": BATTERY_REPLACE_PERCENT,
+            "battery_replace_7d_percent_support": BATTERY_REPLACE_7D_PERCENT,
+            "instantaneous_values_are_primary": False,
+            "condition_has_unknown_state": False,
         }
 
         return {
@@ -516,22 +589,27 @@ class BatteryHealthDiscoverySensor(
             "freshness_states": freshness_state_counts,
             "power_outage_supported": len(operability.outages),
             "power_outage_events_24h_total": sum(
-                evidence.events_24h or 0
-                for evidence in operability.outages.values()
+                evidence.events_24h or 0 for evidence in operability.outages.values()
             ),
             "evidence_readiness": evidence_readiness,
             "cycle_integrity": cycle_integrity_counts,
             "baseline_v2_eligibility": baseline_v2_counts,
             "cycle_segments": cycle_segment_counts,
-            "baseline_v2_persisted_records": len(
-                self.coordinator.baseline_v2_records
-            ),
+            "baseline_v2_persisted_records": len(self.coordinator.baseline_v2_records),
             "baseline_v2_persistence": persistence_counts,
             "health_summary": summary_state,
             "health_states": health_counts,
             "health_paths": health_paths,
             "health_thresholds": thresholds,
-            # Retained for one release as an explicit dev21/dev22 parity surface.
+            # Dev24 shadow model; production entities remain on the dev23 model.
+            "health_v2_summary": health_v2_summary,
+            "health_v2_conditions": health_v2_conditions,
+            "health_v2_without_condition": health_v2_no_condition,
+            "health_v2_calculation": health_v2_calculation,
+            "health_v2_trends": health_v2_trends,
+            "health_v2_modes": health_v2_modes,
+            "health_v2_thresholds": health_v2_thresholds,
+            # Retained for parity/history during the transition.
             "shadow_health_candidates": health_counts,
             "shadow_health_paths": health_paths,
             "shadow_health_thresholds": thresholds,

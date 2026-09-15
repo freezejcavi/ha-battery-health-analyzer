@@ -110,7 +110,9 @@ class BaselineV2Tests(unittest.TestCase):
             key = f"2026-09-{day:02d}"
             battery_daily[key] = battery(60)
             voltage_daily[key] = voltage(2900)
-        for day in range(8, 13):
+        # Five complete post-boundary days are needed to exceed the current
+        # ELIGIBLE_CONFIDENCE=0.60 with TARGET_SEGMENT_DAYS=7.
+        for day in range(8, 14):
             key = f"2026-09-{day:02d}"
             battery_daily[key] = battery(100)
             voltage_daily[key] = voltage(3200, p10=3150)
