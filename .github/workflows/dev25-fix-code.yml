@@ -67,8 +67,13 @@ jobs:
             custom_components/battery_health/health_v2.py \
             custom_components/battery_health/sensor.py \
             tests/test_health_entity_contract.py \
-            tests/test_health_v2_summary.py
+            tests/test_health_v2_summary.py || true
           ruff format \
+            custom_components/battery_health/health_v2.py \
+            custom_components/battery_health/sensor.py \
+            tests/test_health_entity_contract.py \
+            tests/test_health_v2_summary.py
+          ruff check \
             custom_components/battery_health/health_v2.py \
             custom_components/battery_health/sensor.py \
             tests/test_health_entity_contract.py \
