@@ -69,13 +69,9 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         device = result[0]
         self.assertEqual(device.battery_entity_id, "sensor.freezer_battery")
-        self.assertEqual(
-            device.voltage_entity_id, "sensor.freezer_battery_voltage"
-        )
+        self.assertEqual(device.voltage_entity_id, "sensor.freezer_battery_voltage")
         self.assertEqual(device.last_seen_entity_id, "sensor.freezer_last_seen")
-        self.assertEqual(
-            device.outage_entity_id, "sensor.freezer_power_outage_count"
-        )
+        self.assertEqual(device.outage_entity_id, "sensor.freezer_power_outage_count")
         self.assertEqual(
             device.temperature_entity_id,
             "sensor.freezer_temperature",
@@ -87,9 +83,7 @@ class DiscoveryTests(unittest.TestCase):
         result = discover_battery_devices(
             [
                 entity("sensor.device_battery", device_class="battery", unit="%"),
-                entity(
-                    "sensor.device_voltage", device_class="voltage", unit="mV"
-                ),
+                entity("sensor.device_voltage", device_class="voltage", unit="mV"),
                 entity(
                     "sensor.device_battery_voltage",
                     device_class="voltage",
@@ -98,9 +92,7 @@ class DiscoveryTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(
-            result[0].voltage_entity_id, "sensor.device_battery_voltage"
-        )
+        self.assertEqual(result[0].voltage_entity_id, "sensor.device_battery_voltage")
 
     def test_tied_voltage_candidates_are_not_silently_selected(self) -> None:
         result = discover_battery_devices(

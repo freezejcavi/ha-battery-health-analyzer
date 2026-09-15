@@ -70,8 +70,7 @@ class DiscoveredBatteryDevice:
         }
         if self.ambiguous_candidates:
             result["ambiguous_candidates"] = {
-                role: list(entity_ids)
-                for role, entity_ids in self.ambiguous_candidates
+                role: list(entity_ids) for role, entity_ids in self.ambiguous_candidates
             }
         return result
 
@@ -137,9 +136,7 @@ class VoltageHistorySummary:
                 round(self.range_mv) if self.range_mv is not None else None
             ),
             "coverage_ratio": round(self.coverage_ratio, 3),
-            "valid_duration_hours": round(
-                self.valid_duration_seconds / 3600, 2
-            ),
+            "valid_duration_hours": round(self.valid_duration_seconds / 3600, 2),
             "history_rows": self.history_rows,
             "value_changes": self.value_changes,
             "latest_voltage_mv": (
@@ -171,6 +168,7 @@ class BatteryHistorySummary:
 
     def as_dict(self) -> dict[str, Any]:
         """Return rounded battery diagnostics for an HA state attribute."""
+
         def rounded(value: float | None) -> float | None:
             return round(value, 1) if value is not None else None
 
@@ -182,9 +180,7 @@ class BatteryHistorySummary:
             "max_24h_percent": rounded(self.max_percent),
             "range_24h_percent": rounded(self.range_percent),
             "coverage_ratio": round(self.coverage_ratio, 3),
-            "valid_duration_hours": round(
-                self.valid_duration_seconds / 3600, 2
-            ),
+            "valid_duration_hours": round(self.valid_duration_seconds / 3600, 2),
             "history_rows": self.history_rows,
             "value_changes": self.value_changes,
             "latest_percent": rounded(self.latest_percent),
@@ -262,6 +258,7 @@ class TelemetryProfile:
 
     def as_dict(self) -> dict[str, Any]:
         """Return compact diagnostics without exposing daily raw aggregates."""
+
         def relation_dict(result: RelationClassification) -> dict[str, Any]:
             return {
                 "type": result.relation,
@@ -288,20 +285,14 @@ class TelemetryProfile:
             },
             "profile_30d": {
                 "battery_behavior": self.battery_behavior.behavior,
-                "behavior_confidence": round(
-                    self.battery_behavior.confidence, 3
-                ),
+                "behavior_confidence": round(self.battery_behavior.confidence, 3),
                 "battery_valid_days": self.battery_days,
                 "voltage_valid_days": self.voltage_days,
                 "temperature_valid_days": self.temperature_days,
             },
             "relations": {
-                "battery_voltage": relation_dict(
-                    self.battery_voltage_relation
-                ),
-                "voltage_temperature": relation_dict(
-                    self.voltage_temperature_relation
-                ),
+                "battery_voltage": relation_dict(self.battery_voltage_relation),
+                "voltage_temperature": relation_dict(self.voltage_temperature_relation),
             },
         }
 

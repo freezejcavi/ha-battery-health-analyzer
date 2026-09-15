@@ -78,9 +78,7 @@ def _reports_24h(
 ) -> int:
     """Count distinct learned/live reports inside the current 24-hour window."""
     recent = {
-        timestamp
-        for timestamp in learned
-        if window_start <= timestamp <= window_end
+        timestamp for timestamp in learned if window_start <= timestamp <= window_end
     }
     if (
         current_last_seen is not None

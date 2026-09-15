@@ -97,7 +97,7 @@ class RelativeHealthAssessment:
             return round(value, digits) if value is not None else None
 
         return {
-            "mode": "relative_health_v2_shadow",
+            "mode": "relative_health_v2",
             "condition_state": self.condition_state,
             "calculation_state": self.calculation_state,
             "trend_state": self.trend_state,

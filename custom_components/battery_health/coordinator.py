@@ -36,6 +36,7 @@ from .models import (
     TelemetryProfile,
 )
 from .operability import (
+    FreshnessEvidence,
     OperabilitySnapshot,
     parse_last_seen,
     summarize_freshness,
@@ -49,6 +50,25 @@ from .recorder import (
 from .storage import BaselineStore
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _freshness_publish_required(
+    previous: FreshnessEvidence | None,
+    current: FreshnessEvidence,
+) -> bool:
+    """Return whether live freshness can change a published decision.
+
+    Raw last_seen events can arrive much faster than the analysis cycle. Keep
+    current evidence internally, but only rewrite CoordinatorEntity states when
+    the freshness decision state, support or issue materially changes.
+    """
+    if previous is None:
+        return True
+    return (previous.supported, previous.state, previous.issue) != (
+        current.supported,
+        current.state,
+        current.issue,
+    )
 
 
 class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
@@ -180,7 +200,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             persisted_record.confidence if persisted_record is not None else None
         )
 
-        # Dev23 production classifier remains unchanged during dev24 validation.
+        # Retain the dev23 classifier only as a temporary legacy diagnostic mirror.
         self.health_assessments[device.device_id] = assess_shadow_health(
             battery_history,
             voltage_history,
@@ -192,9 +212,9 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             persisted_baseline_confidence=persisted_confidence,
         )
 
-        # Dev24 Health Model v2 is a parallel, read-only shadow model. It consumes
-        # the same current and long-term data but treats condition, trend and
-        # calculation quality as separate outputs.
+        # Health Model v2 is the production condition model. It consumes the same
+        # current and long-term data while keeping condition, trend and calculation
+        # quality as separate outputs.
         self.health_v2_assessments[device.device_id] = assess_relative_health_v2(
             battery_history,
             voltage_history,
@@ -217,6 +237,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         observed_at,
     ) -> None:
         """Publish one live freshness update without running Recorder analysis."""
+        previous = self.operability.freshness.get(entity_id)
         learned = self._cadence_store.timestamps(device_id, observed_at)
         evidence = summarize_freshness(
             learned,
@@ -231,6 +252,9 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             freshness=freshness,
             outages=self.operability.outages,
         )
+
+        if not _freshness_publish_required(previous, evidence):
+            return
 
         snapshot = self.data
         if snapshot is not None:

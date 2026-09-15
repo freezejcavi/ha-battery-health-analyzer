@@ -64,9 +64,7 @@ class ShadowHealthCycleGuardTests(unittest.TestCase):
             battery_role="primary",
             battery_processing="level",
             voltage_role="primary",
-            voltage_information=VoltageInformation(
-                "continuous", 1, 30, 30, 100, 1
-            ),
+            voltage_information=VoltageInformation("continuous", 1, 30, 30, 100, 1),
             battery_voltage_topology="independent",
             temperature_context="unavailable",
             outage_role="neutral",

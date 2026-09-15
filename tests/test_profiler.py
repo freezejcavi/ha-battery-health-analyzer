@@ -186,8 +186,7 @@ class ProfileBuilderTests(unittest.TestCase):
             for index, day in enumerate(days)
         }
         temperature_daily = {
-            day: temperature_summary(-5 + index * 5)
-            for index, day in enumerate(days)
+            day: temperature_summary(-5 + index * 5) for index, day in enumerate(days)
         }
 
         profile = build_telemetry_profile(

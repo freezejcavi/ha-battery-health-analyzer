@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import floor, isfinite
-from typing import Any, Iterable
+from typing import Any
 
 FRESHNESS_MIN_CADENCE_SAMPLES = 3
 FRESHNESS_FRESH_RATIO = 1.5
@@ -260,11 +261,7 @@ def summarize_freshness(
         )
     age_seconds = max(0.0, age_seconds)
 
-    if (
-        len(gaps) < FRESHNESS_MIN_CADENCE_SAMPLES
-        or p90_gap is None
-        or p90_gap <= 0
-    ):
+    if len(gaps) < FRESHNESS_MIN_CADENCE_SAMPLES or p90_gap is None or p90_gap <= 0:
         return FreshnessEvidence(
             supported=True,
             last_seen=current_utc,
@@ -352,9 +349,7 @@ def summarize_outage_history(
         None,
     )
     relevant = [
-        point
-        for point in valid
-        if window_start < point.timestamp <= window_end
+        point for point in valid if window_start < point.timestamp <= window_end
     ]
 
     previous = carry
@@ -362,7 +357,11 @@ def summarize_outage_history(
     increment_transitions = 0
     resets = 0
     for point in relevant:
-        if previous is not None and previous.count is not None and point.count is not None:
+        if (
+            previous is not None
+            and previous.count is not None
+            and point.count is not None
+        ):
             delta = point.count - previous.count
             if delta > 0:
                 events += delta

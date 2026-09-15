@@ -43,19 +43,13 @@ class CadenceStoreTests(unittest.TestCase):
         self.assertLessEqual(result[0], self.end - timedelta(days=6, hours=23))
 
     def test_sparse_device_is_not_artificially_resampled(self) -> None:
-        points = [
-            self.end - timedelta(hours=hours)
-            for hours in (150, 114, 78, 42, 6)
-        ]
+        points = [self.end - timedelta(hours=hours) for hours in (150, 114, 78, 42, 6)]
         result = CadenceStore._sanitize(points, self.end)
 
         self.assertEqual(result, sorted(points))
 
     def test_chatty_device_uses_time_balanced_cadence_for_freshness(self) -> None:
-        raw = [
-            self.end - timedelta(minutes=minute)
-            for minute in range(1, 181)
-        ]
+        raw = [self.end - timedelta(minutes=minute) for minute in range(1, 181)]
         sampled = CadenceStore._sanitize(raw, self.end)
         result = summarize_freshness(
             sampled,

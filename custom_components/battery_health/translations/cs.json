@@ -3,13 +3,9 @@
   "config": {
     "step": {
       "user": {
-        "title": "Nastavit Battery Health Analyzer",
-        "description": "Vytvoří jednu read-only discovery instanci. Zdrojové entity ani zařízení se nezmění."
+        "title": "Nastavit analýzu stavu baterií",
+        "description": "Vytvoří jedinou instanci Battery Health Analyzer pro bateriová zařízení z MQTT."
       }
-    },
-    "abort": {
-      "single_instance_allowed": "Battery Health Analyzer je již nastavený."
     }
   }
 }
-

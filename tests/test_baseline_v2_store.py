@@ -16,7 +16,6 @@ from custom_components.battery_health.baseline_v2_store import (
     plan_baseline_v2_persistence,
 )
 
-
 NOW = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
 
 
@@ -33,7 +32,9 @@ def assessment(
         eligibility=eligibility,
         confidence=confidence,
         candidate_mv=candidate,
-        candidate_source="cycle_segment_upper_envelope" if candidate is not None else None,
+        candidate_source="cycle_segment_upper_envelope"
+        if candidate is not None
+        else None,
         anchor=anchor,
         voltage_days=30 if candidate is not None else 0,
         coverage=0.99 if candidate is not None else None,

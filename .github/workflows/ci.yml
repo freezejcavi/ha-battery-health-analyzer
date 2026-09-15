@@ -23,17 +23,12 @@ jobs:
           python -m pip install "homeassistant>=2026.9,<2026.10" ruff
       - name: Compile full repository
         run: python -m compileall -q custom_components tests
-      - name: Ruff dev24 changed code
+      - name: Ruff full repository
         id: ruff
         continue-on-error: true
         run: |
           set -o pipefail
-          ruff check \
-            custom_components/battery_health/health_v2.py \
-            custom_components/battery_health/coordinator.py \
-            custom_components/battery_health/sensor.py \
-            tests/test_health_v2.py \
-            2>&1 | tee ruff.log
+          ruff check custom_components/battery_health tests 2>&1 | tee ruff.log
       - name: Full unit tests
         id: tests
         if: always()

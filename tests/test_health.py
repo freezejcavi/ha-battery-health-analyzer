@@ -136,9 +136,7 @@ def baseline(
         boundary_kind=(
             "possible_boundary" if segment_state == "possible_boundary" else None
         ),
-        boundary_date=(
-            "2026-09-12" if segment_state == "possible_boundary" else None
-        ),
+        boundary_date=("2026-09-12" if segment_state == "possible_boundary" else None),
         cycle_start_known=False,
         usable_days=("2026-09-10", "2026-09-11", "2026-09-12"),
         excluded_days=0,

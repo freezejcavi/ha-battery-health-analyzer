@@ -108,29 +108,21 @@ def _weighted_window(
             deduplicated.append((timestamp, value))
 
     carry = next(
-        (
-            point
-            for point in reversed(deduplicated)
-            if point[0] <= window_start
-        ),
+        (point for point in reversed(deduplicated) if point[0] <= window_start),
         None,
     )
     relevant: list[tuple[datetime, float | None]] = []
     if carry is not None:
         relevant.append(carry)
     relevant.extend(
-        point
-        for point in deduplicated
-        if window_start < point[0] < window_end
+        point for point in deduplicated if window_start < point[0] < window_end
     )
 
     weighted_values: list[tuple[float, float]] = []
     for index, (timestamp, value) in enumerate(relevant):
         interval_start = max(timestamp, window_start)
         next_timestamp = (
-            relevant[index + 1][0]
-            if index + 1 < len(relevant)
-            else window_end
+            relevant[index + 1][0] if index + 1 < len(relevant) else window_end
         )
         interval_end = min(next_timestamp, window_end)
         duration = (interval_end - interval_start).total_seconds()

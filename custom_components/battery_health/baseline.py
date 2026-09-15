@@ -37,9 +37,10 @@ def select_battery_percent(
         if (current := parse_battery_percent(current_value)) is not None:
             return current, "current"
         return None, "unavailable"
-    if recorder_values and (
-        recorded := parse_battery_percent(recorder_values[-1])
-    ) is not None:
+    if (
+        recorder_values
+        and (recorded := parse_battery_percent(recorder_values[-1])) is not None
+    ):
         return recorded, "recorder"
     return None, "unavailable"
 
@@ -48,10 +49,7 @@ def baseline_confidence(record: BaselineRecord) -> float:
     """Return confidence from 0.5 after one 24h window to 1.0 after 48h."""
     qualified_hours = max(
         0.0,
-        (
-            record.last_qualified_at - record.first_qualified_at
-        ).total_seconds()
-        / 3600,
+        (record.last_qualified_at - record.first_qualified_at).total_seconds() / 3600,
     )
     return min(1.0, 0.5 + qualified_hours / 96)
 
@@ -91,9 +89,7 @@ def learn_baseline(
         return BaselineLearningResult(record, "baseline_preserved", confidence)
 
     new_record = BaselineRecord(
-        baseline_mv=(
-            history.median_mv if baseline_raised else record.baseline_mv
-        ),
+        baseline_mv=(history.median_mv if baseline_raised else record.baseline_mv),
         first_qualified_at=record.first_qualified_at,
         last_qualified_at=observed_at,
         sample_count=record.sample_count + 1,

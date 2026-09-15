@@ -251,7 +251,9 @@ class BaselineV2Store:
             try:
                 self.records[device_id] = BaselineV2Record.from_storage_dict(data)
             except (KeyError, TypeError, ValueError):
-                _LOGGER.warning("Ignoring invalid guarded baseline v2 for %s", device_id)
+                _LOGGER.warning(
+                    "Ignoring invalid guarded baseline v2 for %s", device_id
+                )
         self._dirty = False
 
     def apply(

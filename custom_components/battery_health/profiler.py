@@ -15,7 +15,6 @@ from .models import (
     VoltageHistorySummary,
 )
 
-
 MIN_PROFILE_DAYS = 5
 STATIC_SPAN_PERCENT = 2.0
 MONOTONIC_MIN_SPAN_PERCENT = 3.0
@@ -129,9 +128,7 @@ def pearson_correlation(
     if left_energy == 0 or right_energy == 0:
         return None, paired_days
 
-    covariance = sum(
-        left * right for left, right in zip(left_delta, right_delta)
-    )
+    covariance = sum(left * right for left, right in zip(left_delta, right_delta))
     correlation = covariance / sqrt(left_energy * right_energy)
     return max(-1.0, min(1.0, correlation)), paired_days
 
@@ -185,40 +182,29 @@ def build_telemetry_profile(
 ) -> TelemetryProfile:
     """Build one compact profile from aligned complete-day summaries."""
     temperatures = temperature_daily or {}
-    days = sorted(
-        set(battery_daily)
-        | set(voltage_daily)
-        | set(temperatures)
-    )
+    days = sorted(set(battery_daily) | set(voltage_daily) | set(temperatures))
 
     battery_median = [
         battery_daily[day].median_percent if day in battery_daily else None
         for day in days
     ]
     battery_p90 = [
-        battery_daily[day].p90_percent if day in battery_daily else None
-        for day in days
+        battery_daily[day].p90_percent if day in battery_daily else None for day in days
     ]
     voltage_p90 = [
-        voltage_daily[day].p90_mv if day in voltage_daily else None
-        for day in days
+        voltage_daily[day].p90_mv if day in voltage_daily else None for day in days
     ]
     temperature_p90 = [
-        temperatures[day].p90 if day in temperatures else None
-        for day in days
+        temperatures[day].p90 if day in temperatures else None for day in days
     ]
 
     last_seven_days = days[-7:]
     battery_upper = stable_upper_envelope(
-        battery_daily[day].p90_percent
-        if day in battery_daily
-        else None
+        battery_daily[day].p90_percent if day in battery_daily else None
         for day in last_seven_days
     )
     voltage_upper = stable_upper_envelope(
-        voltage_daily[day].p90_mv
-        if day in voltage_daily
-        else None
+        voltage_daily[day].p90_mv if day in voltage_daily else None
         for day in last_seven_days
     )
 

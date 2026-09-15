@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from statistics import median
-from typing import Any, Mapping
+from typing import Any
 
 from .cycle import CycleIntegrity, assess_cycle_integrity
 from .evidence import EvidenceModel, VoltageInformation
@@ -60,7 +61,9 @@ class BaselineV2Assessment:
             "eligibility": self.eligibility,
             "confidence": round(self.confidence, 3),
             "candidate": {
-                "voltage_mv": round(self.candidate_mv) if self.candidate_mv is not None else None,
+                "voltage_mv": round(self.candidate_mv)
+                if self.candidate_mv is not None
+                else None,
                 "source": self.candidate_source,
                 "persisted": False,
             },
@@ -136,7 +139,15 @@ def segment_current_cycle(
     days = sorted(set(battery_daily) | set(voltage_daily))
     total = len(days)
     if cycle_integrity.state == "insufficient":
-        return CycleSegment("insufficient", None, None, False, (), total, ("cycle_integrity_insufficient",))
+        return CycleSegment(
+            "insufficient",
+            None,
+            None,
+            False,
+            (),
+            total,
+            ("cycle_integrity_insufficient",),
+        )
     if cycle_integrity.state in {"probable_boundary", "possible_boundary"}:
         return CycleSegment(
             "current_boundary",
@@ -151,7 +162,7 @@ def segment_current_cycle(
     candidates: list[tuple[int, str, str]] = []
     for index in range(3, len(days) - 1):
         day = days[index]
-        previous = days[max(0, index - 7):index]
+        previous = days[max(0, index - 7) : index]
         result = assess_cycle_integrity(
             {key: battery_daily[key] for key in previous if key in battery_daily},
             {key: voltage_daily[key] for key in previous if key in voltage_daily},
@@ -168,11 +179,24 @@ def segment_current_cycle(
 
     found = _latest_boundary_cluster(candidates)
     if found is None:
-        return CycleSegment("left_censored", None, None, False, tuple(days), 0, ("no_boundary_detected_in_window",))
+        return CycleSegment(
+            "left_censored",
+            None,
+            None,
+            False,
+            tuple(days),
+            0,
+            ("no_boundary_detected_in_window",),
+        )
     index, boundary_date, kind = found
     if kind == "possible_boundary":
         return CycleSegment(
-            "possible_boundary", kind, boundary_date, False, (), total,
+            "possible_boundary",
+            kind,
+            boundary_date,
+            False,
+            (),
+            total,
             ("historical_boundary_not_strong_enough",),
         )
     return CycleSegment(
@@ -180,7 +204,7 @@ def segment_current_cycle(
         kind,
         boundary_date,
         False,
-        tuple(days[index + 1:]),
+        tuple(days[index + 1 :]),
         index + 1,
         ("historical_probable_boundary", "boundary_day_excluded"),
     )
@@ -231,28 +255,59 @@ def assess_guarded_baseline_v2(
         voltage_information,
         evidence_model.battery_voltage_topology,
     )
-    informative_voltage = (
-        evidence_model.voltage_role in {"primary", "supporting", "shared"}
-        and voltage_information.information in {"continuous", "quantized"}
-    )
+    informative_voltage = evidence_model.voltage_role in {
+        "primary",
+        "supporting",
+        "shared",
+    } and voltage_information.information in {"continuous", "quantized"}
     if not informative_voltage:
         return BaselineV2Assessment(
-            "not_required", 0.0, None, None, "none", 0, None, segment,
+            "not_required",
+            0.0,
+            None,
+            None,
+            "none",
+            0,
+            None,
+            segment,
             ("informative_voltage_baseline_not_required",),
         )
-    if evidence_model.decision_readiness == "blocked" or segment.state in {"insufficient", "possible_boundary"}:
-        reason = "evidence_blocked" if evidence_model.decision_readiness == "blocked" else "cycle_segment_blocked"
-        return BaselineV2Assessment("blocked", 0.0, None, None, "none", 0, None, segment, (reason,))
+    if evidence_model.decision_readiness == "blocked" or segment.state in {
+        "insufficient",
+        "possible_boundary",
+    }:
+        reason = (
+            "evidence_blocked"
+            if evidence_model.decision_readiness == "blocked"
+            else "cycle_segment_blocked"
+        )
+        return BaselineV2Assessment(
+            "blocked", 0.0, None, None, "none", 0, None, segment, (reason,)
+        )
     if evidence_model.temperature_context == "required":
         return BaselineV2Assessment(
-            "blocked", 0.0, None, None, "none", 0, None, segment,
+            "blocked",
+            0.0,
+            None,
+            None,
+            "none",
+            0,
+            None,
+            segment,
             ("temperature_context_required",),
         )
 
     if segment.state == "current_boundary":
         if segment.boundary_kind == "possible_boundary":
             return BaselineV2Assessment(
-                "learning", 0.0, None, None, "possible_cycle_boundary", 0, None, segment,
+                "learning",
+                0.0,
+                None,
+                None,
+                "possible_cycle_boundary",
+                0,
+                None,
+                segment,
                 ("awaiting_boundary_confirmation",),
             )
         candidate = (
@@ -260,12 +315,21 @@ def assess_guarded_baseline_v2(
             if voltage_current is not None and voltage_current.issue is None
             else None
         )
-        coverage = voltage_current.coverage_ratio if voltage_current is not None and voltage_current.issue is None else None
+        coverage = (
+            voltage_current.coverage_ratio
+            if voltage_current is not None and voltage_current.issue is None
+            else None
+        )
         confidence = min(0.4, voltage_information.confidence, coverage or 0.0)
         return BaselineV2Assessment(
-            "learning", confidence, candidate,
+            "learning",
+            confidence,
+            candidate,
             "current_24h_after_boundary" if candidate is not None else None,
-            "observed_cycle_boundary", 0, coverage, segment,
+            "observed_cycle_boundary",
+            0,
+            coverage,
+            segment,
             ("no_complete_post_boundary_day",),
         )
 
@@ -276,11 +340,19 @@ def assess_guarded_baseline_v2(
         and voltage_daily[day].issue is None
         and voltage_daily[day].p90_mv is not None
     ]
-    candidate = _upper([float(summary.p90_mv) for summary in usable if summary.p90_mv is not None])
+    candidate = _upper(
+        [float(summary.p90_mv) for summary in usable if summary.p90_mv is not None]
+    )
     coverage = min((summary.coverage_ratio for summary in usable), default=None)
     voltage_days = len(usable)
-    anchor, anchor_confidence = _anchor(segment, battery_daily, evidence_model.battery_processing)
-    channel_confidence = min(voltage_information.confidence, 0.8) if voltage_information.information == "quantized" else voltage_information.confidence
+    anchor, anchor_confidence = _anchor(
+        segment, battery_daily, evidence_model.battery_processing
+    )
+    channel_confidence = (
+        min(voltage_information.confidence, 0.8)
+        if voltage_information.information == "quantized"
+        else voltage_information.confidence
+    )
     confidence = min(
         {"ready": 1.0, "limited": 0.5}.get(evidence_model.decision_readiness, 0.0),
         1.0 if segment.state == "segmented" else 0.65,

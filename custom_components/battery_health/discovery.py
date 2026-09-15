@@ -88,9 +88,7 @@ def _battery_low_score(entity: EntityDescriptor) -> int | None:
     return 100 * is_battery_class + 50 * has_low_name
 
 
-def _source_base(
-    battery: _Selection, battery_low: _Selection
-) -> str | None:
+def _source_base(battery: _Selection, battery_low: _Selection) -> str | None:
     """Return the stable object-id base shared by sibling source entities."""
     candidates = (
         (
@@ -109,9 +107,7 @@ def _source_base(
     return None
 
 
-def _voltage_score(
-    entity: EntityDescriptor, source_base: str | None
-) -> int | None:
+def _voltage_score(entity: EntityDescriptor, source_base: str | None) -> int | None:
     if entity.domain != "sensor":
         return None
 
@@ -139,9 +135,7 @@ def _voltage_score(
     )
 
 
-def _temperature_score(
-    entity: EntityDescriptor, source_base: str | None
-) -> int | None:
+def _temperature_score(entity: EntityDescriptor, source_base: str | None) -> int | None:
     """Prefer the regular measured temperature over diagnostic device temperature."""
     if entity.domain != "sensor" or entity.device_class != "temperature":
         return None
@@ -278,9 +272,7 @@ def discover_battery_devices(
                 outage_entity_id=outage.entity_id,
                 temperature_entity_id=temperature.entity_id,
                 temperature_issue=(
-                    ISSUE_AMBIGUOUS_TEMPERATURE
-                    if temperature.tied_entity_ids
-                    else None
+                    ISSUE_AMBIGUOUS_TEMPERATURE if temperature.tied_entity_ids else None
                 ),
                 issues=tuple(issues),
                 ambiguous_candidates=tuple(ambiguous_candidates),

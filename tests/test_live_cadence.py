@@ -15,8 +15,7 @@ class LiveCadenceTests(unittest.TestCase):
         observed_at = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
         cadence_start = observed_at - timedelta(days=7)
         reports = [
-            observed_at - timedelta(hours=hours)
-            for hours in (150, 114, 78, 42, 6)
+            observed_at - timedelta(hours=hours) for hours in (150, 114, 78, 42, 6)
         ]
 
         result = summarize_freshness(
@@ -34,8 +33,7 @@ class LiveCadenceTests(unittest.TestCase):
         observed_at = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
         cadence_start = observed_at - timedelta(days=7)
         reports = [
-            observed_at - timedelta(hours=hours)
-            for hours in (150, 126, 102, 78, 54)
+            observed_at - timedelta(hours=hours) for hours in (150, 126, 102, 78, 54)
         ]
 
         result = summarize_freshness(

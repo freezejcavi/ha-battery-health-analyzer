@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from custom_components.battery_health.models import (
     BatteryHistoryPoint,
@@ -15,7 +15,6 @@ from custom_components.battery_health.statistics import (
     summarize_battery_history,
     summarize_voltage_history,
 )
-
 
 START = datetime(2026, 9, 12, tzinfo=UTC)
 END = START + timedelta(hours=24)

@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.25`**
+**Current development version: `0.1.0-dev.26`**
 
 Dev21 introduced a read-only shadow health classifier and real Home Assistant
 validation on the complete 31-device MQTT population produced
@@ -54,6 +54,8 @@ explicitly `limited` calculations. All former 11 production `unknown` cases beca
 calculable conditions without introducing any new `weakening` or `replace` state.
 Dev25 therefore promotes Health Model v2 to the existing production entity IDs.
 The dev23 classifier remains available only as a temporary legacy diagnostic mirror.
+
+Real dev25 post-reload acceptance reproduced the v2 model exactly in production: `25 ok / 5 declining / 1 weakening / 0 replace / 0 unavailable`, with 28 `ready`, 3 `limited`, all 31 devices `fresh`, and all seven guarded baseline-v2 records retained. Dev26 is release hardening only: it does not retune health thresholds or change the public condition contract.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -133,7 +135,7 @@ current 24h p90, recent 7d reference, robust 30d upper reference and recent tren
 Percentage is not assumed to be literal remaining lifetime. A low instantaneous
 percentage therefore cannot create a severe state by itself.
 
-The initial shadow condition states are:
+The production condition states are:
 
 - `ok`: robust current regime remains close to its own reference without a
   material persistent decline;
@@ -164,8 +166,8 @@ segmented new cycle filters pre-cycle history out of the v2 reference.
 Example diagnostic shape:
 
 ```text
-health_v2_shadow:
-  mode: relative_health_v2_shadow
+health:
+  mode: relative_health_v2
   condition_state: ok
   calculation_state: ready
   trend_state: stable
@@ -193,8 +195,7 @@ voltage provides a usable condition signal. That case is reported separately as
 
 ## Legacy dev23 classifier (temporary diagnostic mirror)
 
-The current production classifier is retained during dev24 as the comparison
-control. Its safety gates run before classification:
+The dev23 classifier is retained temporarily as a legacy comparison control. Its safety gates run before classification:
 
 - Evidence Routing must be `ready` and freshness must be `open` or `caution`;
 - current Cycle Integrity must be `stable`;

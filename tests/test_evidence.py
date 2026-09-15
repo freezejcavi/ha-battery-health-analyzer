@@ -101,10 +101,7 @@ def freshness(state: str) -> FreshnessEvidence:
 
 class VoltageInformationTests(unittest.TestCase):
     def test_static_voltage_is_detected(self) -> None:
-        daily = {
-            f"d{day}": voltage_summary(2600)
-            for day in range(1, 31)
-        }
+        daily = {f"d{day}": voltage_summary(2600) for day in range(1, 31)}
         result = classify_voltage_information(daily)
         self.assertEqual(result.information, "static")
         self.assertEqual(result.distinct_levels, 1)

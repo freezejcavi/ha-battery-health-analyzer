@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from custom_components.battery_health.baseline import (
     baseline_confidence,
@@ -15,7 +15,6 @@ from custom_components.battery_health.models import (
     BaselineRecord,
     VoltageHistorySummary,
 )
-
 
 NOW = datetime(2026, 9, 14, tzinfo=UTC)
 
@@ -127,9 +126,7 @@ class BaselineLearningTests(unittest.TestCase):
     def test_storage_round_trip_preserves_record(self) -> None:
         existing = record(3000, age_hours=24)
 
-        restored = BaselineRecord.from_storage_dict(
-            existing.as_storage_dict()
-        )
+        restored = BaselineRecord.from_storage_dict(existing.as_storage_dict())
 
         self.assertEqual(restored, existing)
 
