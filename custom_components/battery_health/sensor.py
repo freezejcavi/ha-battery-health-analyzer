@@ -1,13 +1,13 @@
-"""Diagnostic sensor platform for Battery Health Analyzer."""
+"""Sensor platform for Battery Health Analyzer."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -20,10 +20,27 @@ from .health import (
     BATTERY_ONLY_LOW_UPPER_MAX_PERCENT,
     BATTERY_ONLY_OK_MIN_PERCENT,
     HEALTH_MIN_COVERAGE,
+    HEALTH_STATES,
     VOLTAGE_OK_RATIO,
     VOLTAGE_REPLACE_RATIO,
-    assess_shadow_health,
+    summarize_health_states,
 )
+
+_HEALTH_ICONS = {
+    "ok": "mdi:battery-check",
+    "weakening": "mdi:battery-alert",
+    "replace": "mdi:battery-alert-variant-outline",
+    "unknown": "mdi:battery-unknown",
+}
+
+
+def _service_device_info(entry: ConfigEntry) -> DeviceInfo:
+    """Return the integration-owned service device descriptor."""
+    return DeviceInfo(
+        entry_type=DeviceEntryType.SERVICE,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=NAME,
+    )
 
 
 async def async_setup_entry(
@@ -31,8 +48,206 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the telemetry diagnostic sensor."""
-    async_add_entities([BatteryHealthDiscoverySensor(entry, entry.runtime_data)])
+    """Set up diagnostic, summary and per-device health sensors."""
+    coordinator: BatteryHealthCoordinator = entry.runtime_data
+    known_device_ids = {device.device_id for device in coordinator.data.devices}
+
+    async_add_entities(
+        [
+            BatteryHealthDiscoverySensor(entry, coordinator),
+            BatteryHealthSummarySensor(entry, coordinator),
+            *[
+                BatteryHealthDeviceSensor(
+                    entry,
+                    coordinator,
+                    device.device_id,
+                    device.device_name,
+                )
+                for device in coordinator.data.devices
+            ],
+        ]
+    )
+
+    @callback
+    def _add_new_health_entities() -> None:
+        """Create entities for MQTT battery devices discovered after setup."""
+        new_entities: list[BatteryHealthDeviceSensor] = []
+        for device in coordinator.data.devices:
+            if device.device_id in known_device_ids:
+                continue
+            known_device_ids.add(device.device_id)
+            new_entities.append(
+                BatteryHealthDeviceSensor(
+                    entry,
+                    coordinator,
+                    device.device_id,
+                    device.device_name,
+                )
+            )
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_health_entities))
+
+
+class BatteryHealthDeviceSensor(
+    CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
+):
+    """Publish the validated health state for one discovered MQTT battery device."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(HEALTH_STATES)
+    _attr_has_entity_name = False
+    _unrecorded_attributes = frozenset({MATCH_ALL})
+
+    def __init__(
+        self,
+        entry: ConfigEntry,
+        coordinator: BatteryHealthCoordinator,
+        device_id: str,
+        device_name: str | None,
+    ) -> None:
+        """Initialize one stable per-device health entity."""
+        super().__init__(coordinator)
+        self._device_id = device_id
+        display_name = device_name or device_id[:8]
+        self._attr_name = f"{display_name} Battery health"
+        self._attr_unique_id = f"{entry.entry_id}_{device_id}_health"
+        self._attr_device_info = _service_device_info(entry)
+
+    def _device(self):
+        """Return the currently discovered device descriptor, if still present."""
+        return next(
+            (
+                device
+                for device in self.coordinator.data.devices
+                if device.device_id == self._device_id
+            ),
+            None,
+        )
+
+    @property
+    def native_value(self) -> str:
+        """Return ok / weakening / replace / unknown."""
+        assessment = self.coordinator.health_assessments.get(self._device_id)
+        if assessment is None or assessment.candidate_state not in HEALTH_STATES:
+            return "unknown"
+        return assessment.candidate_state
+
+    @property
+    def icon(self) -> str:
+        """Return an icon matching the current health state."""
+        return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose compact decision evidence without recording attribute churn."""
+        assessment = self.coordinator.health_assessments.get(self._device_id)
+        device = self._device()
+        if assessment is None:
+            return {
+                "confidence": 0.0,
+                "decision_path": "unavailable",
+                "reasons": ["health_assessment_unavailable"],
+                "limitations": [],
+                "source_device_id": self._device_id,
+            }
+
+        diagnostics = assessment.as_dict()
+        metrics = diagnostics["metrics"]
+        record = self.coordinator.baseline_v2_records.get(self._device_id)
+        return {
+            "confidence": diagnostics["confidence"],
+            "decision_path": assessment.decision_path,
+            "voltage_health_ratio": metrics["voltage_health_ratio"],
+            "battery_level_percent": metrics["battery_level_percent"],
+            "baseline_mv": metrics["baseline_mv"],
+            "current_voltage_p90_mv": metrics["current_voltage_p90_mv"],
+            "reasons": list(assessment.reasons),
+            "limitations": list(assessment.limitations),
+            "cycle_generation": (
+                record.cycle_generation if record is not None else None
+            ),
+            "source_device_id": self._device_id,
+            "battery_entity_id": (
+                device.battery_entity_id if device is not None else None
+            ),
+            "voltage_entity_id": (
+                device.voltage_entity_id if device is not None else None
+            ),
+            "temperature_entity_id": (
+                device.temperature_entity_id if device is not None else None
+            ),
+        }
+
+
+class BatteryHealthSummarySensor(
+    CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
+):
+    """Publish the aggregate actionable battery-health state."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(HEALTH_STATES)
+    _attr_has_entity_name = True
+    _attr_name = "Summary"
+    _unrecorded_attributes = frozenset({MATCH_ALL})
+
+    def __init__(
+        self, entry: ConfigEntry, coordinator: BatteryHealthCoordinator
+    ) -> None:
+        """Initialize the summary entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_health_summary"
+        self._attr_device_info = _service_device_info(entry)
+
+    def _state_by_device(self) -> list[tuple[str, str]]:
+        """Return current health state paired with a readable device name."""
+        result: list[tuple[str, str]] = []
+        for device in self.coordinator.data.devices:
+            assessment = self.coordinator.health_assessments.get(device.device_id)
+            state = (
+                assessment.candidate_state
+                if assessment is not None
+                and assessment.candidate_state in HEALTH_STATES
+                else "unknown"
+            )
+            result.append((state, device.device_name or device.device_id[:8]))
+        return result
+
+    @property
+    def native_value(self) -> str:
+        """Return the highest actionable aggregate state."""
+        state, _counts = summarize_health_states(
+            state for state, _name in self._state_by_device()
+        )
+        return state
+
+    @property
+    def icon(self) -> str:
+        """Return an icon matching the aggregate state."""
+        return _HEALTH_ICONS.get(self.native_value, _HEALTH_ICONS["unknown"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose compact state counts and attention lists."""
+        state_by_device = self._state_by_device()
+        _state, counts = summarize_health_states(
+            state for state, _name in state_by_device
+        )
+        names_by_state = {
+            state: [name for current, name in state_by_device if current == state]
+            for state in HEALTH_STATES
+        }
+        return {
+            "total": len(state_by_device),
+            "ok": counts["ok"],
+            "weakening": counts["weakening"],
+            "replace": counts["replace"],
+            "unknown": counts["unknown"],
+            "replace_devices": names_by_state["replace"],
+            "weakening_devices": names_by_state["weakening"],
+            "unknown_devices": names_by_state["unknown"],
+        }
 
 
 class BatteryHealthDiscoverySensor(
@@ -51,11 +266,7 @@ class BatteryHealthDiscoverySensor(
         """Initialize the diagnostic sensor."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_discovered_devices"
-        self._attr_device_info = DeviceInfo(
-            entry_type=DeviceEntryType.SERVICE,
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=NAME,
-        )
+        self._attr_device_info = _service_device_info(entry)
 
     @property
     def native_value(self) -> int:
@@ -64,7 +275,7 @@ class BatteryHealthDiscoverySensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return compact telemetry, persistence and shadow-health diagnostics."""
+        """Return compact telemetry, persistence and health diagnostics."""
         snapshot = self.coordinator.data
         operability = self.coordinator.operability
         devices = snapshot.devices
@@ -90,13 +301,8 @@ class BatteryHealthDiscoverySensor(
             "insufficient": 0,
         }
         persistence_counts: dict[str, int] = {}
-        shadow_health_counts = {
-            "ok": 0,
-            "weakening": 0,
-            "replace": 0,
-            "unknown": 0,
-        }
-        shadow_health_paths: dict[str, int] = {}
+        health_counts = {state: 0 for state in HEALTH_STATES}
+        health_paths: dict[str, int] = {}
 
         for device in devices:
             diagnostics = device.as_dict()
@@ -234,41 +440,20 @@ class BatteryHealthDiscoverySensor(
                     persistence_counts.get(persistence.state, 0) + 1
                 )
 
-            if (
-                profile is not None
-                and evidence_model is not None
-                and cycle_integrity is not None
-                and baseline_v2 is not None
-            ):
-                persisted_record = self.coordinator.baseline_v2_records.get(
-                    device.device_id
+            health = self.coordinator.health_assessments.get(device.device_id)
+            diagnostics["health_shadow"] = (
+                health.as_dict() if health is not None else None
+            )
+            if health is not None:
+                state = (
+                    health.candidate_state
+                    if health.candidate_state in health_counts
+                    else "unknown"
                 )
-                health_shadow = assess_shadow_health(
-                    battery_history,
-                    voltage_history,
-                    profile,
-                    evidence_model,
-                    cycle_integrity,
-                    baseline_v2,
-                    persisted_baseline_mv=(
-                        persisted_record.baseline_mv
-                        if persisted_record is not None
-                        else None
-                    ),
-                    persisted_baseline_confidence=(
-                        persisted_record.confidence
-                        if persisted_record is not None
-                        else None
-                    ),
+                health_counts[state] += 1
+                health_paths[health.decision_path] = (
+                    health_paths.get(health.decision_path, 0) + 1
                 )
-                diagnostics["health_shadow"] = health_shadow.as_dict()
-                if health_shadow.candidate_state in shadow_health_counts:
-                    shadow_health_counts[health_shadow.candidate_state] += 1
-                shadow_health_paths[health_shadow.decision_path] = (
-                    shadow_health_paths.get(health_shadow.decision_path, 0) + 1
-                )
-            else:
-                diagnostics["health_shadow"] = None
 
             device_diagnostics.append(diagnostics)
 
@@ -286,6 +471,23 @@ class BatteryHealthDiscoverySensor(
                 for evidence in operability.freshness.values()
             )
             for state in freshness_states
+        }
+
+        summary_state, _summary_counts = summarize_health_states(
+            health.candidate_state
+            for health in self.coordinator.health_assessments.values()
+        )
+
+        thresholds = {
+            "voltage_ok_ratio": VOLTAGE_OK_RATIO,
+            "voltage_replace_ratio": VOLTAGE_REPLACE_RATIO,
+            "minimum_coverage": HEALTH_MIN_COVERAGE,
+            "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
+            "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
+            "battery_only_low_upper_max_percent": (
+                BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
+            ),
+            "battery_only_replace_allowed": False,
         }
 
         return {
@@ -325,18 +527,13 @@ class BatteryHealthDiscoverySensor(
                 self.coordinator.baseline_v2_records
             ),
             "baseline_v2_persistence": persistence_counts,
-            "shadow_health_candidates": shadow_health_counts,
-            "shadow_health_paths": shadow_health_paths,
-            "shadow_health_thresholds": {
-                "voltage_ok_ratio": VOLTAGE_OK_RATIO,
-                "voltage_replace_ratio": VOLTAGE_REPLACE_RATIO,
-                "minimum_coverage": HEALTH_MIN_COVERAGE,
-                "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
-                "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
-                "battery_only_low_upper_max_percent": (
-                    BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
-                ),
-                "battery_only_replace_allowed": False,
-            },
+            "health_summary": summary_state,
+            "health_states": health_counts,
+            "health_paths": health_paths,
+            "health_thresholds": thresholds,
+            # Retained for one release as an explicit dev21/dev22 parity surface.
+            "shadow_health_candidates": health_counts,
+            "shadow_health_paths": health_paths,
+            "shadow_health_thresholds": thresholds,
             "devices": device_diagnostics,
         }
