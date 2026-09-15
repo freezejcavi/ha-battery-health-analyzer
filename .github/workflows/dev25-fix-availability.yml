@@ -1,0 +1,44 @@
+name: Dev25 Fix Availability
+
+on:
+  push:
+    branches:
+      - dev25-health-v2-calibration
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev25-health-v2-calibration
+      - name: Preserve CoordinatorEntity availability
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('custom_components/battery_health/sensor.py')
+          text = path.read_text()
+          old = '''        return (\n            assessment is not None\n            and assessment.calculation_state != "unavailable"\n            and assessment.condition_state in V2_CONDITION_STATES\n        )'''
+          new = '''        return (\n            super().available\n            and assessment is not None\n            and assessment.calculation_state != "unavailable"\n            and assessment.condition_state in V2_CONDITION_STATES\n        )'''
+          if old not in text:
+              raise SystemExit('device availability block not found')
+          text = text.replace(old, new, 1)
+
+          old = '''        return state is not None'''
+          new = '''        return super().available and state is not None'''
+          if old not in text:
+              raise SystemExit('summary availability block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit availability guard
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/battery_health/sensor.py
+          git commit -m "dev25: preserve coordinator availability semantics"
+          git push
