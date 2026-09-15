@@ -229,9 +229,7 @@ def _voltage_condition(
     delta = current - reference
     sustained_ratio = (
         reference_7d / reference_30d
-        if reference_7d is not None
-        and reference_30d is not None
-        and reference_30d > 0
+        if reference_7d is not None and reference_30d is not None and reference_30d > 0
         else None
     )
 
@@ -239,20 +237,19 @@ def _voltage_condition(
         if ratio >= VOLTAGE_DECLINING_RATIO and trend != "falling":
             return "ok", ratio, delta, ("guarded_relative_voltage_stable",)
         if ratio < VOLTAGE_WEAKENING_RATIO and trend == "falling":
-            return "weakening", ratio, delta, ("guarded_relative_voltage_material_drop",)
+            return (
+                "weakening",
+                ratio,
+                delta,
+                ("guarded_relative_voltage_material_drop",),
+            )
         return "declining", ratio, delta, ("aggressive_escalation_guarded",)
 
-    if (
-        ratio < VOLTAGE_REPLACE_RATIO
-        and (
-            trend == "falling"
-            or (sustained_ratio is not None and sustained_ratio < 0.92)
-        )
+    if ratio < VOLTAGE_REPLACE_RATIO and (
+        trend == "falling" or (sustained_ratio is not None and sustained_ratio < 0.92)
     ):
         return "replace", ratio, delta, ("relative_voltage_deep_persistent_drop",)
-    if ratio < VOLTAGE_WEAKENING_RATIO or (
-        ratio < 0.96 and trend == "falling"
-    ):
+    if ratio < VOLTAGE_WEAKENING_RATIO or (ratio < 0.96 and trend == "falling"):
         return "weakening", ratio, delta, ("relative_voltage_material_drop",)
     if ratio < VOLTAGE_DECLINING_RATIO or trend == "falling":
         return "declining", ratio, delta, ("relative_voltage_decline",)
@@ -276,9 +273,7 @@ def _battery_condition(
     )
     drop = max(0.0, reference - persistent_level)
     sustained_drop = (
-        max(0.0, reference - reference_7d)
-        if reference_7d is not None
-        else 0.0
+        max(0.0, reference - reference_7d) if reference_7d is not None else 0.0
     )
 
     if (
@@ -290,7 +285,12 @@ def _battery_condition(
         and drop >= 15.0
         and (trend == "falling" or sustained_drop >= 15.0)
     ):
-        return "replace", ratio, current - reference, ("relative_battery_deep_persistent_drop",)
+        return (
+            "replace",
+            ratio,
+            current - reference,
+            ("relative_battery_deep_persistent_drop",),
+        )
 
     if (
         persistent_level <= BATTERY_LOW_PERCENT
@@ -304,12 +304,9 @@ def _battery_condition(
         state = "declining" if conservative_cap else "weakening"
         return state, ratio, current - reference, ("relative_battery_material_drop",)
 
-    if (
-        drop >= BATTERY_STRONG_DECLINE_DROP_PP
-        or (
-            drop >= BATTERY_DECLINING_DROP_PP
-            and (trend == "falling" or behavior == "monotonic")
-        )
+    if drop >= BATTERY_STRONG_DECLINE_DROP_PP or (
+        drop >= BATTERY_DECLINING_DROP_PP
+        and (trend == "falling" or behavior == "monotonic")
     ):
         return "declining", ratio, current - reference, ("relative_battery_decline",)
 
@@ -471,9 +468,21 @@ def assess_relative_health_v2(
         if voltage_coverage < MIN_COVERAGE:
             limitations.append("low_current_voltage_coverage")
         return RelativeHealthAssessment(
-            state, calc_state, trend, confidence, assessment_mode, "voltage_mv",
-            voltage_level, reference_7, reference_30, reference, ratio, delta,
-            recent_change, reasons, tuple(limitations),
+            state,
+            calc_state,
+            trend,
+            confidence,
+            assessment_mode,
+            "voltage_mv",
+            voltage_level,
+            reference_7,
+            reference_30,
+            reference,
+            ratio,
+            delta,
+            recent_change,
+            reasons,
+            tuple(limitations),
         )
 
     if battery_usable and battery_level is not None:
@@ -520,9 +529,21 @@ def assess_relative_health_v2(
         if battery_coverage < MIN_COVERAGE:
             limitations.append("low_current_battery_coverage")
         return RelativeHealthAssessment(
-            state, calc_state, trend, confidence, assessment_mode, "battery_percent",
-            battery_level, reference_7, reference_30, reference, ratio, delta,
-            recent_change, reasons, tuple(limitations),
+            state,
+            calc_state,
+            trend,
+            confidence,
+            assessment_mode,
+            "battery_percent",
+            battery_level,
+            reference_7,
+            reference_30,
+            reference,
+            ratio,
+            delta,
+            recent_change,
+            reasons,
+            tuple(limitations),
         )
 
     return RelativeHealthAssessment(

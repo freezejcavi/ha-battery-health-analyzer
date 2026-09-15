@@ -32,12 +32,26 @@ from .health_v2 import (
     BATTERY_REPLACE_PERCENT,
     BATTERY_STRONG_DECLINE_DROP_PP,
     BATTERY_WEAKENING_DROP_PP,
+)
+from .health_v2 import (
     CALCULATION_STATES as V2_CALCULATION_STATES,
+)
+from .health_v2 import (
     CONDITION_STATES as V2_CONDITION_STATES,
+)
+from .health_v2 import (
     MIN_COVERAGE as V2_MIN_COVERAGE,
+)
+from .health_v2 import (
     TREND_STATES as V2_TREND_STATES,
+)
+from .health_v2 import (
     VOLTAGE_DECLINING_RATIO as V2_VOLTAGE_DECLINING_RATIO,
+)
+from .health_v2 import (
     VOLTAGE_REPLACE_RATIO as V2_VOLTAGE_REPLACE_RATIO,
+)
+from .health_v2 import (
     VOLTAGE_WEAKENING_RATIO as V2_VOLTAGE_WEAKENING_RATIO,
 )
 
@@ -329,8 +343,8 @@ class BatteryHealthDiscoverySensor(
             diagnostics["battery_percent_now"] = snapshot.battery_percent.get(
                 device.device_id
             )
-            diagnostics["battery_percent_source"] = (
-                snapshot.battery_percent_source.get(device.device_id)
+            diagnostics["battery_percent_source"] = snapshot.battery_percent_source.get(
+                device.device_id
             )
 
             battery_history = (
@@ -340,9 +354,7 @@ class BatteryHealthDiscoverySensor(
             )
             if device.battery_entity_id is not None:
                 diagnostics["battery_history"] = (
-                    battery_history.as_dict()
-                    if battery_history is not None
-                    else None
+                    battery_history.as_dict() if battery_history is not None else None
                 )
 
             voltage_history = (
@@ -352,9 +364,7 @@ class BatteryHealthDiscoverySensor(
             )
             if device.voltage_entity_id is not None:
                 diagnostics["voltage_history"] = (
-                    voltage_history.as_dict()
-                    if voltage_history is not None
-                    else None
+                    voltage_history.as_dict() if voltage_history is not None else None
                 )
 
             freshness = (
@@ -441,7 +451,9 @@ class BatteryHealthDiscoverySensor(
                         "persisted": device.device_id
                         in self.coordinator.baseline_v2_records,
                         "record": (
-                            self.coordinator.baseline_v2_records[device.device_id].as_dict()
+                            self.coordinator.baseline_v2_records[
+                                device.device_id
+                            ].as_dict()
                             if device.device_id in self.coordinator.baseline_v2_records
                             else None
                         ),
@@ -506,8 +518,7 @@ class BatteryHealthDiscoverySensor(
         )
         freshness_state_counts = {
             state: sum(
-                evidence.state == state
-                for evidence in operability.freshness.values()
+                evidence.state == state for evidence in operability.freshness.values()
             )
             for state in freshness_states
         }
@@ -534,9 +545,7 @@ class BatteryHealthDiscoverySensor(
             "minimum_coverage": HEALTH_MIN_COVERAGE,
             "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
             "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
-            "battery_only_low_upper_max_percent": (
-                BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
-            ),
+            "battery_only_low_upper_max_percent": (BATTERY_ONLY_LOW_UPPER_MAX_PERCENT),
             "battery_only_replace_allowed": False,
         }
         health_v2_thresholds = {
@@ -580,16 +589,13 @@ class BatteryHealthDiscoverySensor(
             "freshness_states": freshness_state_counts,
             "power_outage_supported": len(operability.outages),
             "power_outage_events_24h_total": sum(
-                evidence.events_24h or 0
-                for evidence in operability.outages.values()
+                evidence.events_24h or 0 for evidence in operability.outages.values()
             ),
             "evidence_readiness": evidence_readiness,
             "cycle_integrity": cycle_integrity_counts,
             "baseline_v2_eligibility": baseline_v2_counts,
             "cycle_segments": cycle_segment_counts,
-            "baseline_v2_persisted_records": len(
-                self.coordinator.baseline_v2_records
-            ),
+            "baseline_v2_persisted_records": len(self.coordinator.baseline_v2_records),
             "baseline_v2_persistence": persistence_counts,
             "health_summary": summary_state,
             "health_states": health_counts,

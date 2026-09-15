@@ -127,9 +127,7 @@ def baseline(
         boundary_kind=(
             "possible_boundary" if segment_state == "possible_boundary" else None
         ),
-        boundary_date=(
-            "2026-09-12" if segment_state == "possible_boundary" else None
-        ),
+        boundary_date=("2026-09-12" if segment_state == "possible_boundary" else None),
         cycle_start_known=False,
         usable_days=usable_days,
         excluded_days=0,
@@ -151,7 +149,9 @@ def baseline(
 
 
 class RelativeVoltageTests(unittest.TestCase):
-    def test_p1_style_low_instant_percent_is_ok_when_voltage_history_is_stable(self) -> None:
+    def test_p1_style_low_instant_percent_is_ok_when_voltage_history_is_stable(
+        self,
+    ) -> None:
         daily_voltage = [2910, 2914, 2909, 2908, 2906, 2904, 2905, 2906, 2905, 2904]
         result = assess_relative_health_v2(
             battery_summary(27),
@@ -254,7 +254,9 @@ class RelativeBatteryTests(unittest.TestCase):
         )
         self.assertEqual(result.condition_state, "declining")
 
-    def test_low_monotonic_percentage_relative_to_own_history_is_weakening(self) -> None:
+    def test_low_monotonic_percentage_relative_to_own_history_is_weakening(
+        self,
+    ) -> None:
         values = [27, 27, 26, 26, 25, 24, 24, 23, 22, 21, 21, 20]
         result = assess_relative_health_v2(
             battery_summary(20),
@@ -324,7 +326,9 @@ class RelativeHealthGuardTests(unittest.TestCase):
         self.assertEqual(result.assessment_mode, "temperature_guarded_relative_voltage")
         self.assertEqual(result.calculation_state, "limited")
 
-    def test_possible_historical_boundary_limits_confidence_but_not_condition(self) -> None:
+    def test_possible_historical_boundary_limits_confidence_but_not_condition(
+        self,
+    ) -> None:
         result = assess_relative_health_v2(
             battery_summary(100),
             voltage_summary(3232),
@@ -339,7 +343,9 @@ class RelativeHealthGuardTests(unittest.TestCase):
         self.assertEqual(result.condition_state, "ok")
         self.assertEqual(result.calculation_state, "limited")
 
-    def test_no_current_signal_is_measurement_unavailable_not_unknown_condition(self) -> None:
+    def test_no_current_signal_is_measurement_unavailable_not_unknown_condition(
+        self,
+    ) -> None:
         result = assess_relative_health_v2(
             None,
             None,
