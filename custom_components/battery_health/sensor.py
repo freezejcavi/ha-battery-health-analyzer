@@ -15,6 +15,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .cadence_store import CADENCE_SAMPLE_INTERVAL_MINUTES
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
+from .health import (
+    BATTERY_ONLY_LOW_MAX_PERCENT,
+    BATTERY_ONLY_LOW_UPPER_MAX_PERCENT,
+    BATTERY_ONLY_OK_MIN_PERCENT,
+    HEALTH_MIN_COVERAGE,
+    VOLTAGE_OK_RATIO,
+    VOLTAGE_REPLACE_RATIO,
+    assess_shadow_health,
+)
 
 
 async def async_setup_entry(
@@ -55,7 +64,7 @@ class BatteryHealthDiscoverySensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return compact telemetry and guarded baseline diagnostics."""
+        """Return compact telemetry, persistence and shadow-health diagnostics."""
         snapshot = self.coordinator.data
         operability = self.coordinator.operability
         devices = snapshot.devices
@@ -81,6 +90,13 @@ class BatteryHealthDiscoverySensor(
             "insufficient": 0,
         }
         persistence_counts: dict[str, int] = {}
+        shadow_health_counts = {
+            "ok": 0,
+            "weakening": 0,
+            "replace": 0,
+            "unknown": 0,
+        }
+        shadow_health_paths: dict[str, int] = {}
 
         for device in devices:
             diagnostics = device.as_dict()
@@ -218,6 +234,42 @@ class BatteryHealthDiscoverySensor(
                     persistence_counts.get(persistence.state, 0) + 1
                 )
 
+            if (
+                profile is not None
+                and evidence_model is not None
+                and cycle_integrity is not None
+                and baseline_v2 is not None
+            ):
+                persisted_record = self.coordinator.baseline_v2_records.get(
+                    device.device_id
+                )
+                health_shadow = assess_shadow_health(
+                    battery_history,
+                    voltage_history,
+                    profile,
+                    evidence_model,
+                    cycle_integrity,
+                    baseline_v2,
+                    persisted_baseline_mv=(
+                        persisted_record.baseline_mv
+                        if persisted_record is not None
+                        else None
+                    ),
+                    persisted_baseline_confidence=(
+                        persisted_record.confidence
+                        if persisted_record is not None
+                        else None
+                    ),
+                )
+                diagnostics["health_shadow"] = health_shadow.as_dict()
+                if health_shadow.candidate_state in shadow_health_counts:
+                    shadow_health_counts[health_shadow.candidate_state] += 1
+                shadow_health_paths[health_shadow.decision_path] = (
+                    shadow_health_paths.get(health_shadow.decision_path, 0) + 1
+                )
+            else:
+                diagnostics["health_shadow"] = None
+
             device_diagnostics.append(diagnostics)
 
         freshness_states = (
@@ -273,5 +325,18 @@ class BatteryHealthDiscoverySensor(
                 self.coordinator.baseline_v2_records
             ),
             "baseline_v2_persistence": persistence_counts,
+            "shadow_health_candidates": shadow_health_counts,
+            "shadow_health_paths": shadow_health_paths,
+            "shadow_health_thresholds": {
+                "voltage_ok_ratio": VOLTAGE_OK_RATIO,
+                "voltage_replace_ratio": VOLTAGE_REPLACE_RATIO,
+                "minimum_coverage": HEALTH_MIN_COVERAGE,
+                "battery_only_ok_min_percent": BATTERY_ONLY_OK_MIN_PERCENT,
+                "battery_only_low_max_percent": BATTERY_ONLY_LOW_MAX_PERCENT,
+                "battery_only_low_upper_max_percent": (
+                    BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
+                ),
+                "battery_only_replace_allowed": False,
+            },
             "devices": device_diagnostics,
         }
