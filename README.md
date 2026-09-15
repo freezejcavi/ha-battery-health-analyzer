@@ -12,7 +12,7 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.26`**
+**Current development version: `0.1.0-dev.27`**
 
 Dev21 introduced a read-only shadow health classifier and real Home Assistant
 validation on the complete 31-device MQTT population produced
@@ -55,7 +55,7 @@ calculable conditions without introducing any new `weakening` or `replace` state
 Dev25 therefore promotes Health Model v2 to the existing production entity IDs.
 The dev23 classifier remains available only as a temporary legacy diagnostic mirror.
 
-Real dev25 post-reload acceptance reproduced the v2 model exactly in production: `25 ok / 5 declining / 1 weakening / 0 replace / 0 unavailable`, with 28 `ready`, 3 `limited`, all 31 devices `fresh`, and all seven guarded baseline-v2 records retained. Dev26 is release hardening only: it does not retune health thresholds or change the public condition contract.
+Real dev25 post-reload acceptance reproduced the v2 model exactly in production: `25 ok / 5 declining / 1 weakening / 0 replace / 0 unavailable`, with 28 `ready`, 3 `limited`, all 31 devices `fresh`, and all seven guarded baseline-v2 records retained. Dev26 release hardening was then accepted with the same production distribution. Dev27 is the final pre-RC contract cleanup: it removes temporary shadow/legacy runtime mirrors, makes deep discovery diagnostics disabled by default, shortens generated health entity IDs to source-derived `<battery source>_health`, and reduces public health attributes to the small set needed to explain the current state. Health thresholds and Store schemas are unchanged.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -98,10 +98,19 @@ entity, not a diagnostic entity. Its unique ID is based on the config entry plus
 the stable Home Assistant `device_id`; no `default_entity_id` or per-device manual
 override is used.
 
-Per-device health attributes include confidence, decision path, robust health
-metrics, reasons, limitations, current guarded cycle generation and source entity
-references. These attributes remain visible in the current state but are marked
-unrecorded so only meaningful health-state transitions need Recorder history.
+Per-device health attributes are intentionally user-facing and small: trend,
+confidence, calculation quality, the selected basis, current/reference values, the
+relative change and a concise reason. A short note is added only when calculation
+quality is limited. Internal source IDs, cycle generations, raw reason codes and
+intermediate references stay in the disabled deep diagnostic sensor instead of the
+normal health entity. Attributes remain unrecorded so only meaningful health-state
+transitions need Recorder history.
+
+Per-device entity IDs are suggested as `sensor.<source battery object id without
+_battery>_health`, independent of Area and the user's global Entity ID format. A
+one-time dev27 migration renames only entity IDs that still look like the old
+system-generated Battery Health Analyzer names; explicit user-customized IDs are
+left untouched. The stable unique ID is unchanged.
 
 The aggregate `Summary` sensor uses v2 actionable precedence:
 
@@ -185,43 +194,15 @@ health:
     - relative_voltage_stable
 ```
 
-Top-level diagnostics expose `health_v2_summary`, `health_v2_conditions`,
-`health_v2_without_condition`, `health_v2_calculation`, `health_v2_trends`,
-`health_v2_modes` and `health_v2_thresholds`.
+The disabled deep diagnostic sensor exposes canonical `health_summary`,
+`health_states`, `health_calculation`, `health_trends`, `health_modes`,
+`health_thresholds` and one full `health` diagnostic object per device. Temporary
+`health_shadow`, `health_v2_shadow`, `legacy_health_*`, `shadow_health_*` and
+`health_v2_*` parity aliases are removed in dev27.
 
 A null v2 condition is allowed only when neither current battery percentage nor
 voltage provides a usable condition signal. That case is reported separately as
 `calculation_state: unavailable`; it is not a battery-condition category.
-
-## Legacy dev23 classifier (temporary diagnostic mirror)
-
-The dev23 classifier is retained temporarily as a legacy comparison control. Its safety gates run before classification:
-
-- Evidence Routing must be `ready` and freshness must be `open` or `caution`;
-- current Cycle Integrity must be `stable`;
-- `possible_boundary`, `current_boundary` and insufficient cycle segments return
-  `unknown`;
-- `temperature_context: required` returns `unknown`;
-- shared/derived battery+voltage evidence without a guarded persisted baseline is
-  `unknown`.
-
-For a guarded persisted continuous voltage baseline, the dev23 engine compares
-the robust **24-hour voltage p90** with the stored baseline:
-
-- ratio >= `0.91` -> `ok`;
-- ratio >= `0.87` and < `0.91` -> `weakening`;
-- ratio < `0.87` -> `replace`.
-
-The voltage path uses 24h p90 rather than an instantaneous value or p50 to reduce
-sensitivity to transient load dips. Confidence is bounded by persisted baseline
-confidence, voltage-information confidence and current Recorder coverage.
-
-The dev23 battery-only fallback is intentionally weaker and remains unchanged for
-comparison during dev24. It cannot produce `replace`.
-
-`power_outage_count` remains supporting evidence only. Its absolute value is not
-health evidence; only reset-aware positive deltas during the previous 24 hours are
-considered.
 
 ## Temperature source selection
 
