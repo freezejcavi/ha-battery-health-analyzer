@@ -22,9 +22,6 @@ jobs:
           import json
           from pathlib import Path
 
-          # 1) Avoid publishing every raw last_seen event to all CoordinatorEntity
-          # listeners. Keep the live evidence current internally, but only publish
-          # when the freshness decision state materially changes.
           path = Path('custom_components/battery_health/coordinator.py')
           text = path.read_text()
           text = text.replace(
@@ -32,11 +29,10 @@ jobs:
               'from .operability import (\n    FreshnessEvidence,\n    OperabilitySnapshot,\n',
           )
           marker = '_LOGGER = logging.getLogger(__name__)\n\n\nclass BatteryHealthCoordinator'
-          helper = '''_LOGGER = logging.getLogger(__name__)\n\n\ndef _freshness_publish_required(\n    previous: FreshnessEvidence | None,\n    current: FreshnessEvidence,\n) -> bool:\n    \"\"\"Return whether live freshness can change a published decision.\n\n    Raw Zigbee/MQTT last_seen events can arrive much faster than the 30-minute\n    analysis cycle. Rewriting every CoordinatorEntity for every such report would\n    rebuild the large diagnostics attribute payload even while the decision gate\n    remains unchanged. Keep the latest evidence internally, but publish immediately\n    only for a material freshness state/support/issue transition.\n    \"\"\"\n    if previous is None:\n        return True\n    return (previous.supported, previous.state, previous.issue) != (\n        current.supported,\n        current.state,\n        current.issue,\n    )\n\n\nclass BatteryHealthCoordinator'''
+          helper = '''_LOGGER = logging.getLogger(__name__)\n\n\ndef _freshness_publish_required(\n    previous: FreshnessEvidence | None,\n    current: FreshnessEvidence,\n) -> bool:\n    \"\"\"Return whether live freshness can change a published decision.\n\n    Raw last_seen events can arrive much faster than the analysis cycle. Keep\n    current evidence internally, but only rewrite CoordinatorEntity states when\n    the freshness decision state, support or issue materially changes.\n    \"\"\"\n    if previous is None:\n        return True\n    return (previous.supported, previous.state, previous.issue) != (\n        current.supported,\n        current.state,\n        current.issue,\n    )\n\n\nclass BatteryHealthCoordinator'''
           if marker not in text:
-              raise SystemExit('coordinator logger/class marker not found')
+              raise SystemExit('coordinator marker not found')
           text = text.replace(marker, helper, 1)
-
           old = '''        learned = self._cadence_store.timestamps(device_id, observed_at)\n        evidence = summarize_freshness(\n            learned,\n            timestamp,\n            observed_at,\n            observed_at - HISTORY_WINDOW,\n            source=\"current\",\n        )\n        freshness = dict(self.operability.freshness)\n        freshness[entity_id] = evidence\n        self.operability = OperabilitySnapshot(\n            freshness=freshness,\n            outages=self.operability.outages,\n        )\n\n        snapshot = self.data\n        if snapshot is not None:\n            device = next(\n                (item for item in snapshot.devices if item.device_id == device_id),\n                None,\n            )\n            profile = snapshot.telemetry_profiles.get(device_id)\n            if device is not None and profile is not None:\n                self._evaluate_device_decision(\n                    device,\n                    snapshot,\n                    profile,\n                    observed_at,\n                    persist=False,\n                )\n\n        self.async_update_listeners()'''
           new = '''        previous = self.operability.freshness.get(entity_id)\n        learned = self._cadence_store.timestamps(device_id, observed_at)\n        evidence = summarize_freshness(\n            learned,\n            timestamp,\n            observed_at,\n            observed_at - HISTORY_WINDOW,\n            source=\"current\",\n        )\n        freshness = dict(self.operability.freshness)\n        freshness[entity_id] = evidence\n        self.operability = OperabilitySnapshot(\n            freshness=freshness,\n            outages=self.operability.outages,\n        )\n\n        if not _freshness_publish_required(previous, evidence):\n            return\n\n        snapshot = self.data\n        if snapshot is not None:\n            device = next(\n                (item for item in snapshot.devices if item.device_id == device_id),\n                None,\n            )\n            profile = snapshot.telemetry_profiles.get(device_id)\n            if device is not None and profile is not None:\n                self._evaluate_device_decision(\n                    device,\n                    snapshot,\n                    profile,\n                    observed_at,\n                    persist=False,\n                )\n\n        self.async_update_listeners()'''
           if old not in text:
@@ -52,76 +48,58 @@ jobs:
           )
           path.write_text(text)
 
-          # Regression tests for live-publish suppression.
-          Path('tests/test_live_freshness_publish.py').write_text('''\"\"\"Regression tests for live last_seen publication throttling.\"\"\"\n\nfrom __future__ import annotations\n\nimport unittest\nfrom datetime import UTC, datetime\n\nfrom custom_components.battery_health.coordinator import _freshness_publish_required\nfrom custom_components.battery_health.operability import FreshnessEvidence\n\n\ndef _freshness(\n    state: str,\n    *,\n    age: float = 0.0,\n    reports: int = 10,\n    issue: str | None = None,\n) -> FreshnessEvidence:\n    return FreshnessEvidence(\n        supported=True,\n        last_seen=datetime(2026, 9, 15, 16, 0, tzinfo=UTC),\n        source=\"current\",\n        age_seconds=age,\n        reports_24h=reports,\n        cadence_samples=10,\n        median_gap_seconds=900.0,\n        p90_gap_seconds=1200.0,\n        age_to_p90_ratio=age / 1200.0,\n        state=state,\n        issue=issue,\n    )\n\n\nclass LiveFreshnessPublishTests(unittest.TestCase):\n    \"\"\"Publish immediately only when the freshness decision can change.\"\"\"\n\n    def test_first_live_evidence_is_published(self) -> None:\n        self.assertTrue(_freshness_publish_required(None, _freshness(\"fresh\")))\n\n    def test_same_fresh_state_does_not_republish_raw_telemetry_churn(self) -> None:\n        previous = _freshness(\"fresh\", age=300.0, reports=10)\n        current = _freshness(\"fresh\", age=0.0, reports=11)\n        self.assertFalse(_freshness_publish_required(previous, current))\n\n    def test_gate_transition_is_published(self) -> None:\n        previous = _freshness(\"insufficient\", issue=\"insufficient_cadence\")\n        current = _freshness(\"fresh\")\n        self.assertTrue(_freshness_publish_required(previous, current))\n\n    def test_issue_transition_is_published(self) -> None:\n        previous = _freshness(\"insufficient\", issue=\"first_issue\")\n        current = _freshness(\"insufficient\", issue=\"second_issue\")\n        self.assertTrue(_freshness_publish_required(previous, current))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n''')
+          Path('tests/test_live_freshness_publish.py').write_text('''\"\"\"Regression tests for live last_seen publication throttling.\"\"\"\n\nfrom __future__ import annotations\n\nimport unittest\nfrom datetime import UTC, datetime\n\nfrom custom_components.battery_health.coordinator import _freshness_publish_required\nfrom custom_components.battery_health.operability import FreshnessEvidence\n\n\ndef _freshness(\n    state: str,\n    *,\n    age: float = 0.0,\n    reports: int = 10,\n    issue: str | None = None,\n) -> FreshnessEvidence:\n    return FreshnessEvidence(\n        supported=True,\n        last_seen=datetime(2026, 9, 15, 16, 0, tzinfo=UTC),\n        source=\"current\",\n        age_seconds=age,\n        reports_24h=reports,\n        cadence_samples=10,\n        median_gap_seconds=900.0,\n        p90_gap_seconds=1200.0,\n        age_to_p90_ratio=age / 1200.0,\n        state=state,\n        issue=issue,\n    )\n\n\nclass LiveFreshnessPublishTests(unittest.TestCase):\n    def test_first_live_evidence_is_published(self) -> None:\n        self.assertTrue(_freshness_publish_required(None, _freshness(\"fresh\")))\n\n    def test_same_fresh_state_does_not_republish_raw_telemetry_churn(self) -> None:\n        previous = _freshness(\"fresh\", age=300.0, reports=10)\n        current = _freshness(\"fresh\", age=0.0, reports=11)\n        self.assertFalse(_freshness_publish_required(previous, current))\n\n    def test_gate_transition_is_published(self) -> None:\n        previous = _freshness(\"insufficient\", issue=\"insufficient_cadence\")\n        current = _freshness(\"fresh\")\n        self.assertTrue(_freshness_publish_required(previous, current))\n\n    def test_issue_transition_is_published(self) -> None:\n        previous = _freshness(\"insufficient\", issue=\"first_issue\")\n        current = _freshness(\"insufficient\", issue=\"second_issue\")\n        self.assertTrue(_freshness_publish_required(previous, current))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n''')
 
-          # 2) v2 is production now; remove the semantic shadow marker from its payload.
           path = Path('custom_components/battery_health/health_v2.py')
-          text = path.read_text().replace(
+          path.write_text(path.read_text().replace(
               '\"mode\": \"relative_health_v2_shadow\"',
               '\"mode\": \"relative_health_v2\"',
-          )
-          path.write_text(text)
+          ))
 
-          # 3) Single-entry metadata and dev26 version.
           path = Path('custom_components/battery_health/manifest.json')
           manifest = json.loads(path.read_text())
           manifest['single_config_entry'] = True
           manifest['version'] = '0.1.0-dev.26'
           path.write_text(json.dumps(manifest, indent=2) + '\n')
 
-          # Home Assistant handles duplicate-flow prevention from single_config_entry.
           path = Path('custom_components/battery_health/config_flow.py')
-          text = path.read_text()
-          text = text.replace(
+          path.write_text(path.read_text().replace(
               '        if self._async_current_entries():\n            return self.async_abort(reason=\"single_instance_allowed\")\n\n',
               '',
-          )
-          path.write_text(text)
+          ))
 
-          # Custom integrations must ship ready-to-use translations under translations/.
           translations = Path('custom_components/battery_health/translations')
           translations.mkdir(exist_ok=True)
           translations.joinpath('en.json').write_text(json.dumps({
               'title': 'Battery Health Analyzer',
-              'config': {
-                  'step': {
-                      'user': {
-                          'title': 'Set up battery health analysis',
-                          'description': 'Create the single Battery Health Analyzer instance for MQTT battery devices.'
-                      }
-                  }
-              }
+              'config': {'step': {'user': {
+                  'title': 'Set up battery health analysis',
+                  'description': 'Create the single Battery Health Analyzer instance for MQTT battery devices.'
+              }}}
           }, ensure_ascii=False, indent=2) + '\n')
           translations.joinpath('cs.json').write_text(json.dumps({
               'title': 'Battery Health Analyzer',
-              'config': {
-                  'step': {
-                      'user': {
-                          'title': 'Nastavit analýzu stavu baterií',
-                          'description': 'Vytvoří jedinou instanci Battery Health Analyzer pro bateriová zařízení z MQTT.'
-                      }
-                  }
-              }
+              'config': {'step': {'user': {
+                  'title': 'Nastavit analýzu stavu baterií',
+                  'description': 'Vytvoří jedinou instanci Battery Health Analyzer pro bateriová zařízení z MQTT.'
+              }}}
           }, ensure_ascii=False, indent=2) + '\n')
 
-          # 4) README: close dev25 and describe release hardening without altering health logic.
           path = Path('README.md')
-          text = path.read_text()
-          text = text.replace(
+          text = path.read_text().replace(
               '**Current development version: `0.1.0-dev.25`**',
               '**Current development version: `0.1.0-dev.26`**',
           )
           needle = ('Dev25 therefore promotes Health Model v2 to the existing production entity IDs.\n'
                     'The dev23 classifier remains available only as a temporary legacy diagnostic mirror.\n')
-          replacement = needle + ('\nReal dev25 post-reload acceptance reproduced the v2 model exactly in production: '
+          addition = ('\nReal dev25 post-reload acceptance reproduced the v2 model exactly in production: '
               '`25 ok / 5 declining / 1 weakening / 0 replace / 0 unavailable`, with '
               '28 `ready`, 3 `limited`, all 31 devices `fresh`, and all seven guarded '
               'baseline-v2 records retained. Dev26 is release hardening only: it does not '
               'retune health thresholds or change the public condition contract.\n')
           if needle not in text:
               raise SystemExit('README dev25 marker not found')
-          text = text.replace(needle, replacement, 1)
+          text = text.replace(needle, needle + addition, 1)
           text = text.replace('The initial shadow condition states are:', 'The production condition states are:')
           text = text.replace('health_v2_shadow:\n  mode: relative_health_v2_shadow', 'health:\n  mode: relative_health_v2')
           text = text.replace(
@@ -129,25 +107,11 @@ jobs:
               'The dev23 classifier is retained temporarily as a legacy comparison control.',
           )
           path.write_text(text)
-
-          # 5) Broaden CI from the dev24 subset to the whole integration + test suite.
-          path = Path('.github/workflows/ci.yml')
-          text = path.read_text()
-          old = '''      - name: Ruff dev24 changed code\n        id: ruff\n        continue-on-error: true\n        run: |\n          set -o pipefail\n          ruff check \\\n            custom_components/battery_health/health_v2.py \\\n            custom_components/battery_health/coordinator.py \\\n            custom_components/battery_health/sensor.py \\\n            tests/test_health_v2.py \\\n            2>&1 | tee ruff.log\n'''
-          new = '''      - name: Ruff full repository\n        id: ruff\n        continue-on-error: true\n        run: |\n          set -o pipefail\n          ruff check custom_components/battery_health tests 2>&1 | tee ruff.log\n'''
-          if old not in text:
-              raise SystemExit('CI Ruff block not found')
-          path.write_text(text.replace(old, new, 1))
-
-          # 6) Add official Home Assistant/HACS repository validators. Repository-level
-          # cosmetics (brand asset/description/topics) are intentionally not release
-          # blockers for a custom repository and are ignored by HACS validation here.
-          Path('.github/workflows/validate.yml').write_text('''name: Validate integration\n\non:\n  push:\n  pull_request:\n  schedule:\n    - cron: \"0 3 * * *\"\n  workflow_dispatch:\n\npermissions: {}\n\njobs:\n  hassfest:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: home-assistant/actions/hassfest@master\n\n  hacs:\n    runs-on: ubuntu-latest\n    steps:\n      - name: HACS validation\n        uses: hacs/action@main\n        with:\n          category: integration\n          ignore: brands description topics\n''')
           PY
       - name: Commit hardening changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components tests README.md .github/workflows/ci.yml .github/workflows/validate.yml
-          git commit -m "dev26: harden runtime and release validation"
+          git add custom_components tests README.md
+          git commit -m "dev26: harden runtime and packaging metadata"
           git push
