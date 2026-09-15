@@ -130,6 +130,7 @@ def segment_current_cycle(
     voltage_daily: Mapping[str, VoltageHistorySummary],
     cycle_integrity: CycleIntegrity,
     voltage_information: VoltageInformation,
+    battery_voltage_topology: str,
 ) -> CycleSegment:
     """Return only complete-day history that is safe for the current cycle."""
     days = sorted(set(battery_daily) | set(voltage_daily))
@@ -158,6 +159,7 @@ def segment_current_cycle(
             voltage_daily.get(day),
             voltage_information,
             "fresh",
+            battery_voltage_topology,
         )
         if result.state not in {"probable_boundary", "possible_boundary"}:
             continue
@@ -222,7 +224,13 @@ def assess_guarded_baseline_v2(
     voltage_information: VoltageInformation,
 ) -> BaselineV2Assessment:
     """Assess baseline eligibility without Store writes or a health verdict."""
-    segment = segment_current_cycle(battery_daily, voltage_daily, cycle_integrity, voltage_information)
+    segment = segment_current_cycle(
+        battery_daily,
+        voltage_daily,
+        cycle_integrity,
+        voltage_information,
+        evidence_model.battery_voltage_topology,
+    )
     informative_voltage = (
         evidence_model.voltage_role in {"primary", "supporting", "shared"}
         and voltage_information.information in {"continuous", "quantized"}
@@ -235,6 +243,11 @@ def assess_guarded_baseline_v2(
     if evidence_model.decision_readiness == "blocked" or segment.state in {"insufficient", "possible_boundary"}:
         reason = "evidence_blocked" if evidence_model.decision_readiness == "blocked" else "cycle_segment_blocked"
         return BaselineV2Assessment("blocked", 0.0, None, None, "none", 0, None, segment, (reason,))
+    if evidence_model.temperature_context == "required":
+        return BaselineV2Assessment(
+            "blocked", 0.0, None, None, "none", 0, None, segment,
+            ("temperature_context_required",),
+        )
 
     if segment.state == "current_boundary":
         if segment.boundary_kind == "possible_boundary":
