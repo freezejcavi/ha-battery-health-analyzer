@@ -21,46 +21,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "homeassistant>=2026.9,<2026.10" ruff
-      - name: Apply dev27 cleanup in validation workspace
-        if: github.ref_name == 'dev27-pre-rc-cleanup'
-        run: |
-          python scripts/dev27_apply.py
-          python - <<'PY'
-          from pathlib import Path
-
-          test_path = Path("tests/test_public_contract.py")
-          text = test_path.read_text()
-          old = '''    def test_deep_discovery_sensor_is_disabled_diagnostic(self) -> None:\n        self.assertEqual(\n            BatteryHealthDiscoverySensor._attr_entity_category,\n            EntityCategory.DIAGNOSTIC,\n        )\n        self.assertFalse(BatteryHealthDiscoverySensor._attr_entity_registry_enabled_default)\n'''
-          new = '''    def test_deep_discovery_sensor_is_disabled_diagnostic(self) -> None:\n        source = (\n            Path(__file__).resolve().parents[1]\n            / "custom_components/battery_health/sensor.py"\n        ).read_text()\n        self.assertIn(\n            "_attr_entity_category = EntityCategory.DIAGNOSTIC",\n            source,\n        )\n        self.assertIn(\n            "_attr_entity_registry_enabled_default = False",\n            source,\n        )\n'''
-          if old not in text:
-              raise SystemExit("public-contract test target not found")
-          text = text.replace(old, new, 1)
-          text = text.replace("import unittest\n", "import unittest\nfrom pathlib import Path\n", 1)
-          text = text.replace("from homeassistant.helpers.entity import EntityCategory\n\n", "")
-          text = text.replace("    BatteryHealthDiscoverySensor,\n", "")
-          test_path.write_text(text)
-
-          sensor_path = Path("custom_components/battery_health/sensor.py")
-          sensor = sensor_path.read_text()
-          sensor = sensor.replace(
-              '    "temperature_sensitive_signal_not_normalized": "Temperature affects the voltage comparison",\n',
-              '    "temperature_sensitive_signal_not_normalized": (\n'
-              '        "Temperature affects the voltage comparison"\n'
-              '    ),\n',
-              1,
-          )
-          sensor = sensor.replace(
-              '    "temperature_sensitive_voltage_bypassed": "Voltage was bypassed because temperature affects it",\n',
-              '    "temperature_sensitive_voltage_bypassed": (\n'
-              '        "Voltage was bypassed because temperature affects it"\n'
-              '    ),\n',
-              1,
-          )
-          sensor_path.write_text(sensor)
-          PY
-          ruff format custom_components/battery_health tests
-          ruff check --fix custom_components/battery_health tests
-          ruff format custom_components/battery_health tests
       - name: Compile full repository
         run: python -m compileall -q custom_components tests
       - name: Ruff full repository
@@ -76,17 +36,6 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest discover -s tests -v 2>&1 | tee tests.log
-      - name: Upload dev27 transformed files
-        if: github.ref_name == 'dev27-pre-rc-cleanup'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dev27-transformed
-          path: |
-            custom_components/battery_health/sensor.py
-            custom_components/battery_health/coordinator.py
-            custom_components/battery_health/manifest.json
-            README.md
-            tests/test_public_contract.py
       - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
