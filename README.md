@@ -12,13 +12,27 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.21`**
+**Current development version: `0.1.0-dev.22`**
 
-Dev21 introduces a **read-only shadow health engine** for calibration. It exposes
+Dev21 introduced a **read-only shadow health engine** for calibration. It exposes
 candidate `ok`, `weakening`, `replace` or `unknown` states only inside the
 existing diagnostic sensor. These candidates are not production health entities,
 do not write any health state to Home Assistant Store and do not alter guarded
 baseline or cycle persistence.
+
+Real dev21 Home Assistant validation on the complete 31-device MQTT population
+produced `19 ok / 1 weakening / 0 replace / 11 unknown`. All 31 devices were
+simultaneously `fresh`, Evidence Routing `ready` and current Cycle Integrity
+`stable`. The single `weakening` candidate was `Teplota_Mrazák`; low/volatile
+shared signals without a healthy anchor, including `Venkovní_sensor`, stayed
+`unknown` as intended.
+
+Dev22 hardens temperature-source discovery before any production health verdict.
+When both a regular same-device `*_temperature` measurement and Zigbee2MQTT's
+diagnostic `*_device_temperature` are present, the exact regular sibling is
+preferred. Diagnostic device temperature remains a safe fallback when it is the
+only temperature candidate; unrelated equally plausible temperature sources stay
+ambiguous. Dev22 does **not** change health thresholds, persistence or cycle logic.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -65,8 +79,8 @@ Safety gates run before any candidate classification:
   intentionally `unknown` rather than falling back to the same battery percentage
   signal under another name.
 
-For a guarded persisted continuous voltage baseline, dev21 compares the robust
-**24-hour voltage p90** with the stored baseline:
+For a guarded persisted continuous voltage baseline, the shadow engine compares
+the robust **24-hour voltage p90** with the stored baseline:
 
 - ratio >= `0.91` -> shadow `ok`;
 - ratio >= `0.87` and < `0.91` -> shadow `weakening`;
@@ -75,7 +89,8 @@ For a guarded persisted continuous voltage baseline, dev21 compares the robust
 The voltage path uses 24h p90 rather than an instantaneous value or p50 to reduce
 sensitivity to transient load dips. Confidence is bounded by persisted baseline
 confidence, voltage-information confidence and current Recorder coverage. These
-thresholds remain calibration hypotheses until real dev21 output is reviewed.
+thresholds remain calibration hypotheses until the temperature-source hardening
+is revalidated on the real population.
 
 Battery-only fallback is intentionally weaker:
 
@@ -85,7 +100,7 @@ Battery-only fallback is intentionally weaker:
   <= 35%) with monotonic/mixed decline may become shadow `weakening`;
 - mid-range, uncorroborated low or otherwise insufficiently calibrated battery-only
   evidence remains `unknown`;
-- **battery-only evidence can never produce `replace` in dev21**.
+- **battery-only evidence can never produce `replace` in the current shadow model**.
 
 `power_outage_count` remains supporting evidence only. It never creates a health
 state by itself; while its health weight is still uncalibrated, an outage signal
@@ -113,7 +128,25 @@ health_shadow:
 
 Top-level diagnostics also expose `shadow_health_candidates`,
 `shadow_health_paths` and the current calibration thresholds. No new user-facing
-health entity exists in dev21.
+health entity exists in dev22.
+
+## Temperature source selection
+
+Temperature context is optional evidence but can block voltage-baseline learning
+when a strong voltage-to-temperature relationship is observed. Source identity is
+therefore safety-relevant.
+
+Zigbee2MQTT distinguishes the regular `temperature` expose (measured temperature)
+from `device_temperature`, which is diagnostic device telemetry. Dev22 uses that
+semantic distinction conservatively:
+
+- exact same-base `<battery source>_temperature` gets preference;
+- `<battery source>_device_temperature` remains usable when it is the only safe
+  same-device temperature candidate;
+- unrelated equal-strength temperature candidates remain `ambiguous_temperature`;
+- setpoint, target, calibration and offset entities remain excluded.
+
+This preference is global and deterministic; there are no per-device overrides.
 
 ## Guarded baseline-v2 persistence
 
@@ -271,9 +304,8 @@ previous 30 complete local calendar days and reduces them to daily aggregates fo
 - battery-percentage to voltage correlation;
 - optional voltage-to-temperature correlation.
 
-Temperature is used only when discovery finds one unambiguous safe same-device
-MQTT temperature sensor. Setpoints, targets, calibration and offset entities are
-excluded.
+Temperature is used only when discovery finds one safe same-device MQTT
+temperature source after the dev22 preference rules above.
 
 ## Legacy baseline status
 
@@ -296,8 +328,9 @@ those records.
 10. Enforce topology de-duplication and required-temperature guards. ✅ dev18
 11. Time-balance bounded cadence history for high-rate devices. ✅ dev19
 12. Persist and reload guarded cycle/baseline-v2 state without downward learning. ✅ dev20
-13. Build and calibrate a read-only shadow health classifier. 🧪 dev21
-14. Publish validated per-device `ok` / `weakening` / `replace` / `unknown` health entities.
+13. Build and validate a read-only shadow health classifier. ✅ dev21
+14. Prefer regular measured temperature over diagnostic device temperature and revalidate temperature context. 🧪 dev22
+15. Publish validated per-device `ok` / `weakening` / `replace` / `unknown` health entities.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 and guarded baseline-v2 records are persisted because they represent learned
@@ -310,11 +343,11 @@ python -m unittest discover -s tests -v
 python -m compileall custom_components tests
 ```
 
-Dev21 adds focused pure tests for voltage-baseline thresholds, guarded unknown
-paths and the battery-only no-`replace` rule. The current development tooling did
-not provide a working repository clone/runtime for physically executing the full
-suite, so real Home Assistant output remains the acceptance gate for this shadow
-calibration slice.
+Dev22 adds focused regression tests for regular-temperature preference, diagnostic
+`device_temperature` fallback and preservation of true temperature ambiguity. The
+current development tooling still does not provide a working repository clone,
+so the full suite has not been physically executed here; real Home Assistant
+output remains the acceptance gate for dev22.
 
 ## Compatibility target
 
