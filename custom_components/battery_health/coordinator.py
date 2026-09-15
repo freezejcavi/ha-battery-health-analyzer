@@ -11,12 +11,25 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .baseline import learn_baseline
+from .baseline_v2 import BaselineV2Assessment, assess_guarded_baseline_v2
+from .baseline_v2_store import (
+    BaselineV2PersistenceResult,
+    BaselineV2Record,
+    BaselineV2Store,
+)
 from .cadence_store import CadenceStore
 from .const import ANALYSIS_INTERVAL, DOMAIN, HISTORY_WINDOW
+from .cycle import CycleIntegrity, assess_cycle_integrity
+from .evidence import (
+    EvidenceModel,
+    build_evidence_model,
+    classify_voltage_information,
+)
 from .ha_discovery import async_discover_battery_devices
 from .models import (
     BaselineLearningResult,
     BatteryHealthSnapshot,
+    DiscoveredBatteryDevice,
     LongTermHistorySnapshot,
     TelemetryProfile,
 )
@@ -37,7 +50,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
-    """Coordinate read-only discovery and Recorder telemetry analysis."""
+    """Coordinate telemetry analysis and guarded baseline v2 persistence."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
@@ -49,16 +62,113 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             update_interval=ANALYSIS_INTERVAL,
         )
         self._baseline_store = BaselineStore(hass)
+        self._baseline_v2_store = BaselineV2Store(hass)
         self._cadence_store = CadenceStore(hass)
         self._long_term_history: LongTermHistorySnapshot | None = None
         self._last_seen_unsub = None
         self._last_seen_entity_to_device: dict[str, str] = {}
         self.operability = OperabilitySnapshot({}, {})
+        self.evidence_models: dict[str, EvidenceModel] = {}
+        self.cycle_integrity: dict[str, CycleIntegrity] = {}
+        self.baseline_v2_assessments: dict[str, BaselineV2Assessment] = {}
+        self.baseline_v2_persistence: dict[str, BaselineV2PersistenceResult] = {}
+
+    @property
+    def baseline_v2_records(self) -> dict[str, BaselineV2Record]:
+        """Expose the current guarded Store snapshot for diagnostics."""
+        return self._baseline_v2_store.records
 
     async def async_initialize(self) -> None:
         """Load existing persistent state before the first refresh."""
         await self._baseline_store.async_load()
+        await self._baseline_v2_store.async_load()
         await self._cadence_store.async_load()
+
+    def _evaluate_device_decision(
+        self,
+        device: DiscoveredBatteryDevice,
+        snapshot: BatteryHealthSnapshot,
+        profile: TelemetryProfile,
+        observed_at,
+        *,
+        persist: bool,
+    ) -> BaselineV2PersistenceResult | None:
+        """Evaluate evidence, cycle integrity and guarded baseline for one device."""
+        long_term = self._long_term_history
+        if long_term is None:
+            return None
+
+        battery_daily = (
+            long_term.battery_daily.get(device.battery_entity_id, {})
+            if device.battery_entity_id is not None
+            else {}
+        )
+        voltage_daily = (
+            long_term.voltage_daily.get(device.voltage_entity_id, {})
+            if device.voltage_entity_id is not None
+            else {}
+        )
+        battery_history = (
+            snapshot.battery_history.get(device.battery_entity_id)
+            if device.battery_entity_id is not None
+            else None
+        )
+        voltage_history = (
+            snapshot.voltage_history.get(device.voltage_entity_id)
+            if device.voltage_entity_id is not None
+            else None
+        )
+        freshness = (
+            self.operability.freshness.get(device.last_seen_entity_id)
+            if device.last_seen_entity_id is not None
+            else None
+        )
+        outage = (
+            self.operability.outages.get(device.outage_entity_id)
+            if device.outage_entity_id is not None
+            else None
+        )
+        voltage_information = classify_voltage_information(voltage_daily)
+        evidence_model = build_evidence_model(
+            profile,
+            battery_history,
+            voltage_history,
+            freshness,
+            outage,
+            voltage_information,
+        )
+        cycle_integrity = assess_cycle_integrity(
+            battery_daily,
+            voltage_daily,
+            battery_history,
+            voltage_history,
+            voltage_information,
+            freshness.state if freshness is not None else None,
+            evidence_model.battery_voltage_topology,
+        )
+        assessment = assess_guarded_baseline_v2(
+            battery_daily,
+            voltage_daily,
+            voltage_history,
+            evidence_model,
+            cycle_integrity,
+            voltage_information,
+        )
+
+        self.evidence_models[device.device_id] = evidence_model
+        self.cycle_integrity[device.device_id] = cycle_integrity
+        self.baseline_v2_assessments[device.device_id] = assessment
+
+        if not persist:
+            return None
+
+        persistence = self._baseline_v2_store.apply(
+            device.device_id,
+            assessment,
+            observed_at,
+        )
+        self.baseline_v2_persistence[device.device_id] = persistence
+        return persistence
 
     @callback
     def _publish_live_freshness(
@@ -83,6 +193,23 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             freshness=freshness,
             outages=self.operability.outages,
         )
+
+        snapshot = self.data
+        if snapshot is not None:
+            device = next(
+                (item for item in snapshot.devices if item.device_id == device_id),
+                None,
+            )
+            profile = snapshot.telemetry_profiles.get(device_id)
+            if device is not None and profile is not None:
+                self._evaluate_device_decision(
+                    device,
+                    snapshot,
+                    profile,
+                    observed_at,
+                    persist=False,
+                )
+
         self.async_update_listeners()
 
     @callback
@@ -141,15 +268,16 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
                 self._cadence_store.observe(device_id, timestamp, observed_at)
 
     async def async_shutdown(self) -> None:
-        """Stop live tracking, flush cadence state and stop coordinator polling."""
+        """Stop live tracking and flush compact persistent state."""
         if self._last_seen_unsub is not None:
             self._last_seen_unsub()
             self._last_seen_unsub = None
         await self._cadence_store.async_save()
+        await self._baseline_v2_store.async_save()
         await super().async_shutdown()
 
     async def _async_update_data(self) -> BatteryHealthSnapshot:
-        """Return one read-only telemetry snapshot without baseline Store writes."""
+        """Return one telemetry snapshot and apply guarded v2 Store transitions."""
         devices = tuple(async_discover_battery_devices(self.hass))
         voltage_entity_ids = sorted(
             device.voltage_entity_id
@@ -274,7 +402,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
                 temperature_daily,
             )
 
-        return BatteryHealthSnapshot(
+        snapshot = BatteryHealthSnapshot(
             devices=devices,
             voltage_history=voltage_history,
             battery_percent=battery_percent,
@@ -283,3 +411,27 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             battery_history=recorder_history.battery_history,
             telemetry_profiles=telemetry_profiles,
         )
+
+        self.evidence_models = {}
+        self.cycle_integrity = {}
+        self.baseline_v2_assessments = {}
+        self.baseline_v2_persistence = {}
+        store_changed = False
+        for device in devices:
+            profile = telemetry_profiles.get(device.device_id)
+            if profile is None:
+                continue
+            persistence = self._evaluate_device_decision(
+                device,
+                snapshot,
+                profile,
+                observed_at,
+                persist=True,
+            )
+            if persistence is not None and persistence.changed:
+                store_changed = True
+
+        if store_changed:
+            await self._baseline_v2_store.async_save()
+
+        return snapshot
