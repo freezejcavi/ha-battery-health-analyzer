@@ -20,9 +20,13 @@ from .health import (
     BATTERY_ONLY_LOW_UPPER_MAX_PERCENT,
     BATTERY_ONLY_OK_MIN_PERCENT,
     HEALTH_MIN_COVERAGE,
-    HEALTH_STATES as LEGACY_HEALTH_STATES,
     VOLTAGE_OK_RATIO,
     VOLTAGE_REPLACE_RATIO,
+)
+from .health import (
+    HEALTH_STATES as LEGACY_HEALTH_STATES,
+)
+from .health import (
     summarize_health_states as summarize_legacy_health_states,
 )
 from .health_v2 import (
@@ -32,13 +36,13 @@ from .health_v2 import (
     BATTERY_REPLACE_PERCENT,
     BATTERY_STRONG_DECLINE_DROP_PP,
     BATTERY_WEAKENING_DROP_PP,
+    summarize_condition_states,
 )
 from .health_v2 import (
     CALCULATION_STATES as V2_CALCULATION_STATES,
 )
 from .health_v2 import (
     CONDITION_STATES as V2_CONDITION_STATES,
-    summarize_condition_states,
 )
 from .health_v2 import (
     MIN_COVERAGE as V2_MIN_COVERAGE,
@@ -238,7 +242,7 @@ class BatteryHealthDeviceSensor(
 class BatteryHealthSummarySensor(
     CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
 ):
-    """Publish the aggregate actionable dev23 battery-health state."""
+    """Publish the aggregate actionable Health Model v2 condition."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(V2_CONDITION_STATES)
@@ -641,15 +645,19 @@ class BatteryHealthDiscoverySensor(
             "baseline_v2_persisted_records": len(self.coordinator.baseline_v2_records),
             "baseline_v2_persistence": persistence_counts,
             "health_summary": health_v2_summary,
-            "health_states": {**health_v2_conditions, "unavailable": health_v2_no_condition},
+            "health_states": {
+                **health_v2_conditions,
+                "unavailable": health_v2_no_condition,
+            },
             "health_calculation": health_v2_calculation,
             "health_trends": health_v2_trends,
             "health_modes": health_v2_modes,
             "legacy_health_summary": legacy_summary_state,
             "legacy_health_states": legacy_health_counts,
             "legacy_health_paths": legacy_health_paths,
-            "health_thresholds": thresholds,
-            # Dev24 shadow model; production entities remain on the dev23 model.
+            "health_thresholds": health_v2_thresholds,
+            "legacy_health_thresholds": thresholds,
+            # Transitional v2 aliases retained for diagnostic compatibility.
             "health_v2_summary": health_v2_summary,
             "health_v2_conditions": health_v2_conditions,
             "health_v2_without_condition": health_v2_no_condition,
