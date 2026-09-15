@@ -1,0 +1,85 @@
+name: Dev25 Fix Code
+
+on:
+  push:
+    branches:
+      - dev25-health-v2-calibration
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev25-health-v2-calibration
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Apply review fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'expected text not found in {path}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'custom_components/battery_health/health_v2.py',
+              '''Dev24 keeps this model read-only and diagnostic. The production dev23 classifier\nremains unchanged until the relative model has been validated on the real MQTT\npopulation.''',
+              '''Dev25 promotes this model to the existing production health entities after real\nvalidation on the complete MQTT population. The dev23 classifier is retained only\nas a temporary legacy diagnostic mirror.''',
+          )
+          replace_once(
+              'custom_components/battery_health/health_v2.py',
+              '# Shadow calibration hypotheses.',
+              '# Calibration hypotheses.',
+          )
+          replace_once(
+              'custom_components/battery_health/health_v2.py',
+              '"""One read-only Health Model v2 assessment."""',
+              '"""One Health Model v2 assessment."""',
+          )
+          replace_once(
+              'custom_components/battery_health/sensor.py',
+              '"""Publish the aggregate actionable dev23 battery-health state."""',
+              '"""Publish the aggregate actionable Health Model v2 condition."""',
+          )
+          replace_once(
+              'custom_components/battery_health/sensor.py',
+              '''            "legacy_health_paths": legacy_health_paths,\n            "health_thresholds": thresholds,''',
+              '''            "legacy_health_paths": legacy_health_paths,\n            "health_thresholds": health_v2_thresholds,\n            "legacy_health_thresholds": thresholds,''',
+          )
+          replace_once(
+              'custom_components/battery_health/sensor.py',
+              '# Dev24 shadow model; production entities remain on the dev23 model.',
+              '# Transitional v2 aliases retained for diagnostic compatibility.',
+          )
+          PY
+          python -m pip install ruff
+          ruff check --fix \
+            custom_components/battery_health/health_v2.py \
+            custom_components/battery_health/sensor.py \
+            tests/test_health_entity_contract.py \
+            tests/test_health_v2_summary.py
+          ruff format \
+            custom_components/battery_health/health_v2.py \
+            custom_components/battery_health/sensor.py \
+            tests/test_health_entity_contract.py \
+            tests/test_health_v2_summary.py
+      - name: Commit review fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/battery_health/health_v2.py \
+                  custom_components/battery_health/sensor.py \
+                  tests/test_health_entity_contract.py \
+                  tests/test_health_v2_summary.py
+          git commit -m "dev25: harden production diagnostics and style"
+          git push
