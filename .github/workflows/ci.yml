@@ -24,6 +24,28 @@ jobs:
       - name: Compile
         run: python -m compileall -q custom_components tests
       - name: Ruff
-        run: ruff check custom_components tests
+        id: ruff
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ruff check custom_components tests 2>&1 | tee ruff.log
       - name: Unit tests
-        run: python -m unittest discover -s tests -v
+        id: tests
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee tests.log
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            ruff.log
+            tests.log
+      - name: Enforce validation
+        if: always()
+        run: |
+          test "${{ steps.ruff.outcome }}" = "success"
+          test "${{ steps.tests.outcome }}" = "success"
