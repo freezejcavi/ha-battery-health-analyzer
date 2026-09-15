@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from datetime import UTC, datetime
 
@@ -11,6 +12,7 @@ from custom_components.battery_health.baseline_v2 import (
 )
 from custom_components.battery_health.baseline_v2_store import (
     BaselineV2Record,
+    BaselineV2Store,
     plan_baseline_v2_persistence,
 )
 
@@ -66,6 +68,18 @@ def record(
         created_at=NOW,
         updated_at=NOW,
     )
+
+
+class FailingThenSuccessfulStore:
+    """Minimal async Store fake for retry semantics."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def async_save(self, data) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("simulated transient write failure")
 
 
 class BaselineV2PersistenceTests(unittest.TestCase):
@@ -169,6 +183,25 @@ class BaselineV2PersistenceTests(unittest.TestCase):
         )
         restored = BaselineV2Record.from_storage_dict(original.as_storage_dict())
         self.assertEqual(restored, original)
+
+    def test_dirty_survives_failed_save_until_retry_succeeds(self) -> None:
+        store = object.__new__(BaselineV2Store)
+        fake_store = FailingThenSuccessfulStore()
+        store._store = fake_store
+        store.records = {}
+        store._dirty = False
+
+        result = store.apply("device-1", assessment(), NOW)
+        self.assertTrue(result.changed)
+        self.assertTrue(store.dirty)
+
+        with self.assertRaises(RuntimeError):
+            asyncio.run(store.async_save())
+        self.assertTrue(store.dirty)
+
+        asyncio.run(store.async_save())
+        self.assertFalse(store.dirty)
+        self.assertEqual(fake_store.calls, 2)
 
 
 if __name__ == "__main__":
