@@ -12,12 +12,16 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.20`**
+**Current development version: `0.1.0-dev.21`**
 
-The repository now has a guarded persistent baseline-v2 Store, but there is still
-no `ok`, `weakening`, `replace` or `unknown` health verdict. Discovery starts
-from Home Assistant Entity Registry entries whose `platform` is exactly `mqtt`,
-then pairs battery percentage, battery voltage, `last_seen`,
+Dev21 introduces a **read-only shadow health engine** for calibration. It exposes
+candidate `ok`, `weakening`, `replace` or `unknown` states only inside the
+existing diagnostic sensor. These candidates are not production health entities,
+do not write any health state to Home Assistant Store and do not alter guarded
+baseline or cycle persistence.
+
+Discovery starts from Home Assistant Entity Registry entries whose `platform` is
+exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
 `power_outage_count` and an optional safe same-device temperature source.
 
 Dev13-dev14 moved `last_seen` cadence learning away from Recorder and into a
@@ -38,7 +42,78 @@ out of the diagnostic sensor and into the coordinator, then adds a **separate**
 guarded Store at `battery_health.baselines_v2`. The older dev7/dev8 Store remains
 untouched and provisional. Only an `eligible` v2 assessment may create or alter a
 v2 record. `learning`, `blocked` and `not_required` assessments never delete or
-rewrite an existing v2 record.
+rewrite an existing v2 record. Real Home Assistant acceptance including an
+explicit integration reload confirmed seven stored generation-1 records survived
+the unload/load roundtrip unchanged.
+
+## Shadow health engine
+
+Dev21 deliberately separates **candidate classification** from a future
+production health verdict. The shadow result is exposed per device as
+`health_shadow` and includes the candidate state, confidence, decision path,
+metrics, reasons and limitations.
+
+Safety gates run before any candidate classification:
+
+- Evidence Routing must be `ready` and freshness must be `open` or `caution`;
+- current Cycle Integrity must be `stable`;
+- `possible_boundary`, `current_boundary` and insufficient cycle segments return
+  `unknown`;
+- `temperature_context: required` returns `unknown` until temperature-aware health
+  normalization is designed and validated;
+- shared/derived battery+voltage evidence without a guarded persisted baseline is
+  intentionally `unknown` rather than falling back to the same battery percentage
+  signal under another name.
+
+For a guarded persisted continuous voltage baseline, dev21 compares the robust
+**24-hour voltage p90** with the stored baseline:
+
+- ratio >= `0.91` -> shadow `ok`;
+- ratio >= `0.87` and < `0.91` -> shadow `weakening`;
+- ratio < `0.87` -> shadow `replace`.
+
+The voltage path uses 24h p90 rather than an instantaneous value or p50 to reduce
+sensitivity to transient load dips. Confidence is bounded by persisted baseline
+confidence, voltage-information confidence and current Recorder coverage. These
+thresholds remain calibration hypotheses until real dev21 output is reviewed.
+
+Battery-only fallback is intentionally weaker:
+
+- a stable/high robust battery level (currently >= 75%) may become low-confidence
+  shadow `ok`;
+- a persistently low battery level (24h robust level <= 30% and 7d upper envelope
+  <= 35%) with monotonic/mixed decline may become shadow `weakening`;
+- mid-range, uncorroborated low or otherwise insufficiently calibrated battery-only
+  evidence remains `unknown`;
+- **battery-only evidence can never produce `replace` in dev21**.
+
+`power_outage_count` remains supporting evidence only. It never creates a health
+state by itself; while its health weight is still uncalibrated, an outage signal
+that conflicts with an otherwise `ok` candidate is conservatively returned as
+`unknown`.
+
+Example diagnostic shape:
+
+```text
+health_shadow:
+  mode: shadow_no_publish
+  candidate_state: ok
+  confidence: 0.65
+  decision_path: voltage_baseline
+  metrics:
+    voltage_health_ratio: 0.982
+    battery_level_percent: 100.0
+    baseline_mv: 3055
+    current_voltage_p90_mv: 3000
+  reasons:
+    - voltage_ratio_ok
+    - double_count_guard_applied
+  limitations: []
+```
+
+Top-level diagnostics also expose `shadow_health_candidates`,
+`shadow_health_paths` and the current calibration thresholds. No new user-facing
+health entity exists in dev21.
 
 ## Guarded baseline-v2 persistence
 
@@ -75,8 +150,8 @@ baseline_v2:
   cycle_segment:
     state: left_censored
   persistence:
-    state: created
-    changed: true
+    state: retained
+    changed: false
     persisted: true
     record:
       baseline_mv: 3055
@@ -204,8 +279,8 @@ excluded.
 
 The baseline Store created during dev7/dev8 is preserved for diagnostics only.
 Its records remain `provisional`; legacy learning stays `shadow_no_save` and
-must not feed the future health verdict. Dev20 does not migrate, overwrite or
-delete those records.
+must not feed the health engine. Dev20 does not migrate, overwrite or delete
+those records.
 
 ## Architecture status
 
@@ -220,8 +295,9 @@ delete those records.
 9. Build guarded baseline v2 from cycle-clean evidence. ✅ dev17
 10. Enforce topology de-duplication and required-temperature guards. ✅ dev18
 11. Time-balance bounded cadence history for high-rate devices. ✅ dev19
-12. Persist guarded cycle/baseline-v2 state without downward learning. 🧪 dev20
-13. Build and validate the final `ok` / `weakening` / `replace` / `unknown` health engine.
+12. Persist and reload guarded cycle/baseline-v2 state without downward learning. ✅ dev20
+13. Build and calibrate a read-only shadow health classifier. 🧪 dev21
+14. Publish validated per-device `ok` / `weakening` / `replace` / `unknown` health entities.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 and guarded baseline-v2 records are persisted because they represent learned
@@ -233,6 +309,12 @@ state that cannot be reconstructed reliably from one current Recorder window.
 python -m unittest discover -s tests -v
 python -m compileall custom_components tests
 ```
+
+Dev21 adds focused pure tests for voltage-baseline thresholds, guarded unknown
+paths and the battery-only no-`replace` rule. The current development tooling did
+not provide a working repository clone/runtime for physically executing the full
+suite, so real Home Assistant output remains the acceptance gate for this shadow
+calibration slice.
 
 ## Compatibility target
 
