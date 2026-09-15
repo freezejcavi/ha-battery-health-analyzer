@@ -12,31 +12,45 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.23`**
+**Current development version: `0.1.0-dev.24`**
 
 Dev21 introduced a read-only shadow health classifier and real Home Assistant
 validation on the complete 31-device MQTT population produced
 `19 ok / 1 weakening / 0 replace / 11 unknown`. All 31 devices were simultaneously
 `fresh`, Evidence Routing `ready` and current Cycle Integrity `stable`. The single
-`weakening` candidate was `Teplota_Mrazák`; low/volatile shared signals without a
-healthy anchor stayed `unknown` as intended.
+`weakening` candidate was `Teplota_Mrazák`.
 
-Dev22 hardened temperature-source discovery and has now also been accepted on the
-real 31-device population. Temperature ambiguity fell to zero. Regular measured
+Dev22 hardened temperature-source discovery and was accepted on the real
+31-device population. Temperature ambiguity fell to zero. Regular measured
 `*_temperature` is selected ahead of Zigbee2MQTT diagnostic
 `*_device_temperature` when both exist. This exposed the expected strong
 voltage-to-temperature relationship on `Venkovní_sensor` (`temperature_context:
-required`), so its guarded baseline is blocked rather than learned. The health
-state distribution remained `19 / 1 / 0 / 11`, confirming that the safety fix did
-not make classification more aggressive.
+required`).
 
-Dev23 promotes that validated classifier **unchanged** to Home Assistant entities.
-The health calculation now runs once in the coordinator and is consumed both by
-diagnostics and by production sensors; there is no second copy of classification
-logic in the entity layer. Dev23 adds one enum health sensor per discovered MQTT
-battery device plus one aggregate summary sensor. Health attributes are exposed
-for transparency but excluded from Recorder attribute history to avoid database
-churn. Newly discovered MQTT battery devices get health entities dynamically.
+Dev23 promoted the validated classifier unchanged to Home Assistant entities.
+The health calculation runs once in the coordinator and is consumed both by
+diagnostics and by production sensors. Dev23 adds one enum health sensor per
+discovered MQTT battery device plus one aggregate summary sensor. Real post-reload
+validation confirmed 31 per-device entities, 7 retained baseline-v2 records and
+full parity between production and shadow outputs.
+
+Dev24 is a **parallel read-only Health Model v2** prompted by real use of the
+published entities. The key finding is that `unknown` mixes two different
+questions: battery condition and ability to calculate it. This is especially
+misleading for strongly derived/volatile devices such as Aqara Motion Sensor P1,
+where an instantaneous percentage can move from 0 to tens of percent while the
+robust voltage regime remains close to its own recent history.
+
+Health Model v2 therefore separates:
+
+- condition: `ok / declining / weakening / replace`;
+- calculation quality: `ready / limited / unavailable`;
+- trend: `stable / falling / recovering / volatile / insufficient`;
+- confidence and assessment mode.
+
+The dev23 production entities remain unchanged during dev24. The v2 model is
+published only inside diagnostics as `health_v2_shadow` until the complete real
+MQTT population is reviewed.
 
 Discovery starts from Home Assistant Entity Registry entries whose `platform` is
 exactly `mqtt`, then pairs battery percentage, battery voltage, `last_seen`,
@@ -66,7 +80,9 @@ the unload/load roundtrip unchanged.
 
 ## Published health entities
 
-Each discovered MQTT battery device gets one enum sensor with these states:
+The currently published dev23 entity contract remains intentionally unchanged
+while dev24 is shadow-tested. Each discovered MQTT battery device has one enum
+sensor with these production states:
 
 - `ok`
 - `weakening`
@@ -83,37 +99,109 @@ metrics, reasons, limitations, current guarded cycle generation and source entit
 references. These attributes remain visible in the current state but are marked
 unrecorded so only meaningful health-state transitions need Recorder history.
 
-The aggregate `Summary` sensor uses actionable precedence:
+The aggregate `Summary` sensor currently uses dev23 actionable precedence:
 
 ```text
 replace > weakening > unknown > ok
 ```
 
-This means a real `weakening` or `replace` condition is not hidden merely because
-some other devices are conservatively `unknown`. Summary attributes expose counts
-for all four states plus device lists needing attention.
+No production entity state or automation contract changes in dev24 until the new
+relative model has passed real-data acceptance.
 
-The legacy diagnostic `health_shadow` block is retained for one transition
-release as a parity surface. In dev23 it is no longer independently calculated;
-it mirrors the exact coordinator assessment used by the published health entity.
-Its `mode` is therefore `published_classifier`.
+## Health Model v2 shadow (dev24)
 
-## Health engine
+The v2 model uses the **best available condition signal relative to the device's
+own history**. Instantaneous values are diagnostic context, not the primary
+condition input.
 
-Safety gates run before any classification:
+For informative continuous voltage the model uses:
+
+- current robust 24-hour voltage p90;
+- recent 7-day median of complete-day p90 values;
+- a 30-day robust upper reference defined as the median of the highest three
+  complete-day p90 values;
+- recent direction from adjacent three-day robust blocks;
+- an existing guarded persisted baseline when it is valid for the current cycle.
+
+When informative voltage is missing, static, quantized or otherwise not the best
+condition channel, battery percentage uses the **same relative-history pattern**:
+current 24h p90, recent 7d reference, robust 30d upper reference and recent trend.
+Percentage is not assumed to be literal remaining lifetime. A low instantaneous
+percentage therefore cannot create a severe state by itself.
+
+The initial shadow condition states are:
+
+- `ok`: robust current regime remains close to its own reference without a
+  material persistent decline;
+- `declining`: an early, informational deterioration relative to own history;
+- `weakening`: a material and persistent decline;
+- `replace`: a deep persistent decline with corroborating multi-day evidence.
+
+For voltage, the initial calibration hypotheses are 0.98 / 0.94 / 0.90 relative
+to the selected reference for declining / weakening / replace. For battery-only
+assessment, deterioration is expressed mainly in percentage-point change relative
+to the device's own observed upper regime; absolute low percentages are only
+supporting evidence.
+
+Volatile percentage channels use a multi-day envelope guard. A one-off drop such
+as `80 -> 80 -> 20 -> 79` must not create a battery-health deterioration. A
+persistent progression such as `80 -> 76 -> 72 -> 67 -> 61` may.
+
+Temperature-sensitive shared voltage remains calculable but is explicitly marked
+`limited` and uses a short-window guarded relative comparison. Aggressive
+escalation is capped until temperature normalization is designed and validated.
+When a separate primary battery percentage channel is safer, the model bypasses
+the temperature-sensitive voltage for condition assessment.
+
+Cycle ambiguity no longer automatically becomes a battery condition called
+`unknown`. Instead it limits confidence and aggressive escalation. A confirmed
+segmented new cycle filters pre-cycle history out of the v2 reference.
+
+Example diagnostic shape:
+
+```text
+health_v2_shadow:
+  mode: relative_health_v2_shadow
+  condition_state: ok
+  calculation_state: ready
+  trend_state: stable
+  confidence: 0.72
+  assessment_mode: relative_voltage
+  signal: voltage_mv
+  metrics:
+    current_24h_robust: 2891
+    reference_7d: 2906
+    reference_30d: 2914
+    reference_used: 2914
+    ratio_to_reference: 0.992
+    delta_from_reference: -23
+  reasons:
+    - relative_voltage_stable
+```
+
+Top-level diagnostics expose `health_v2_summary`, `health_v2_conditions`,
+`health_v2_without_condition`, `health_v2_calculation`, `health_v2_trends`,
+`health_v2_modes` and `health_v2_thresholds`.
+
+A null v2 condition is allowed only when neither current battery percentage nor
+voltage provides a usable condition signal. That case is reported separately as
+`calculation_state: unavailable`; it is not a battery-condition category.
+
+## Dev23 production health engine
+
+The current production classifier is retained during dev24 as the comparison
+control. Its safety gates run before classification:
 
 - Evidence Routing must be `ready` and freshness must be `open` or `caution`;
 - current Cycle Integrity must be `stable`;
 - `possible_boundary`, `current_boundary` and insufficient cycle segments return
   `unknown`;
-- `temperature_context: required` returns `unknown` until temperature-aware health
-  normalization is designed and validated;
+- `temperature_context: required` returns `unknown`;
 - shared/derived battery+voltage evidence without a guarded persisted baseline is
-  intentionally `unknown` rather than falling back to the same battery percentage
-  signal under another name.
+  `unknown`.
 
-For a guarded persisted continuous voltage baseline, the engine compares the
-robust **24-hour voltage p90** with the stored baseline:
+For a guarded persisted continuous voltage baseline, the dev23 engine compares
+the robust **24-hour voltage p90** with the stored baseline:
 
 - ratio >= `0.91` -> `ok`;
 - ratio >= `0.87` and < `0.91` -> `weakening`;
@@ -123,43 +211,12 @@ The voltage path uses 24h p90 rather than an instantaneous value or p50 to reduc
 sensitivity to transient load dips. Confidence is bounded by persisted baseline
 confidence, voltage-information confidence and current Recorder coverage.
 
-Battery-only fallback is intentionally weaker:
+The dev23 battery-only fallback is intentionally weaker and remains unchanged for
+comparison during dev24. It cannot produce `replace`.
 
-- a stable/high robust battery level (currently >= 75%) may become low-confidence
-  `ok`;
-- a persistently low battery level (24h robust level <= 30% and 7d upper envelope
-  <= 35%) with monotonic/mixed decline may become `weakening`;
-- mid-range, uncorroborated low or otherwise insufficiently calibrated battery-only
-  evidence remains `unknown`;
-- **battery-only evidence can never produce `replace` in the current model**.
-
-`power_outage_count` remains supporting evidence only. It never creates a health
-state by itself; while its health weight is still uncalibrated, an outage signal
-that conflicts with an otherwise `ok` state is conservatively returned as
-`unknown`.
-
-Example diagnostic mirror:
-
-```text
-health_shadow:
-  mode: published_classifier
-  candidate_state: ok
-  confidence: 0.65
-  decision_path: voltage_baseline
-  metrics:
-    voltage_health_ratio: 0.982
-    battery_level_percent: 100.0
-    baseline_mv: 3055
-    current_voltage_p90_mv: 3000
-  reasons:
-    - voltage_ratio_ok
-    - double_count_guard_applied
-  limitations: []
-```
-
-Top-level diagnostics expose `health_summary`, `health_states`, `health_paths` and
-`health_thresholds`. The older `shadow_health_*` top-level keys remain for one
-release and point to the same coordinator results.
+`power_outage_count` remains supporting evidence only. Its absolute value is not
+health evidence; only reset-aware positive deltas during the previous 24 hours are
+considered.
 
 ## Temperature source selection
 
@@ -304,10 +361,6 @@ or MQTT packet count. It is diagnostic only and is not a health weight. Live
 evidence/cycle/baseline/health assessment, but do not write the baseline-v2 Store
 or launch a full Recorder/profiler cycle.
 
-`power_outage_count` is optional. Its absolute value is not health evidence; only
-reset-aware positive deltas during the previous 24 hours are supporting evidence.
-A missing counter is neutral.
-
 ## MQTT scope
 
 Diagnostics expose:
@@ -342,8 +395,8 @@ temperature source after the dev22 preference rules above.
 
 The baseline Store created during dev7/dev8 is preserved for diagnostics only.
 Its records remain `provisional`; legacy learning stays `shadow_no_save` and must
-not feed the health engine. Dev20 does not migrate, overwrite or delete those
-records.
+not feed the production health engine. Dev20 does not migrate, overwrite or delete
+those records.
 
 ## Architecture status
 
@@ -360,25 +413,32 @@ records.
 11. Time-balance bounded cadence history for high-rate devices. ✅ dev19
 12. Persist and reload guarded cycle/baseline-v2 state without downward learning. ✅ dev20
 13. Build and validate a read-only shadow health classifier. ✅ dev21
-14. Prefer regular measured temperature over diagnostic device temperature and revalidate temperature context. ✅ dev22
-15. Publish coordinator-backed per-device and aggregate health entities. 🧪 dev23
+14. Prefer measured temperature over diagnostic device temperature. ✅ dev22
+15. Publish coordinator-backed per-device and aggregate health entities. ✅ dev23
+16. Replace calculable `unknown` with relative condition + trend + calculation quality. 🧪 dev24
+17. Promote accepted Health Model v2 to the production entity contract. ⏳
+18. Release hardening / v1 candidate. ⏳
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
 and guarded baseline-v2 records are persisted because they represent learned
 state that cannot be reconstructed reliably from one current Recorder window.
 Health state itself is derived and is therefore not stored separately.
 
-## Local verification
+## Verification
+
+Local commands:
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall custom_components tests
+ruff check custom_components tests
 ```
 
-Dev23 adds pure tests for summary-state precedence and keeps all earlier classifier
-and temperature-source tests. The current development tooling still does not
-provide a working repository clone/runtime for physically executing the full
-suite, so real Home Assistant output remains the acceptance gate for dev23.
+Dev24 adds a GitHub Actions CI workflow using the Home Assistant 2026.9 compatibility
+line so compile, Ruff and unit tests can be physically executed on each push and
+pull request. Real Home Assistant output remains the acceptance gate for the new
+relative-health semantics because synthetic tests cannot establish correct
+calibration on the actual Zigbee2MQTT device population.
 
 ## Compatibility target
 
