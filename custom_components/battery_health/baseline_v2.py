@@ -1,4 +1,4 @@
-"""Read-only guarded baseline v2 helpers for Battery Health Analyzer."""
+"""Guarded baseline v2 assessment helpers for Battery Health Analyzer."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class BaselineV2Assessment:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "mode": "shadow_no_save",
+            "mode": "guarded_assessment",
             "eligibility": self.eligibility,
             "confidence": round(self.confidence, 3),
             "candidate": {
@@ -223,7 +223,7 @@ def assess_guarded_baseline_v2(
     cycle_integrity: CycleIntegrity,
     voltage_information: VoltageInformation,
 ) -> BaselineV2Assessment:
-    """Assess baseline eligibility without Store writes or a health verdict."""
+    """Assess guarded baseline eligibility without performing Store I/O."""
     segment = segment_current_cycle(
         battery_daily,
         voltage_daily,

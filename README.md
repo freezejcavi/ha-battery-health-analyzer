@@ -12,60 +12,83 @@ limitation to be worked around.
 
 ## Development status
 
-**Current development version: `0.1.0-dev.19`**
+**Current development version: `0.1.0-dev.20`**
 
-The repository is in a read-only telemetry, evidence-routing, cycle-integrity
-and guarded-baseline validation phase. Discovery starts from Home Assistant
-Entity Registry entries whose `platform` is exactly `mqtt`, then pairs battery
-percentage, battery voltage, `last_seen`, `power_outage_count` and an optional
-safe same-device temperature source.
+The repository now has a guarded persistent baseline-v2 Store, but there is still
+no `ok`, `weakening`, `replace` or `unknown` health verdict. Discovery starts
+from Home Assistant Entity Registry entries whose `platform` is exactly `mqtt`,
+then pairs battery percentage, battery voltage, `last_seen`,
+`power_outage_count` and an optional safe same-device temperature source.
 
-There is still no `ok`, `weakening`, `replace` or `unknown` health verdict.
+Dev13-dev14 moved `last_seen` cadence learning away from Recorder and into a
+compact live-learned Store after real Home Assistant validation showed that
+Recorder timestamp history was not suitable for learning report cadence. Dev19
+made that Store time-balanced: at most one representative timestamp is retained
+per fixed 15-minute UTC bucket, preventing high-rate devices from collapsing the
+intended seven-day horizon. Real dev19 validation produced 31/31 `fresh`, 31/31
+Evidence Routing `ready` and 31/31 current Cycle Integrity `stable` devices.
 
-Dev13 moved `last_seen` cadence learning away from Recorder after real Home
-Assistant validation showed that timestamp history exposed only one usable state
-in 24 hours while the live MQTT timestamp updated correctly. Dev14 keeps that
-live-learning model and additionally publishes freshness immediately when a
-`last_seen` state changes, without triggering the expensive Recorder/profiler
-refresh.
+Dev15 introduced read-only Evidence Routing. Dev16 added Cycle Integrity. Dev17
+added guarded baseline-v2 assessment and historical cycle segmentation. Dev18
+hardened both layers after real validation exposed double-counting of coupled
+battery percentage and voltage plus a missing required-temperature guard.
 
-Dev15 adds a read-only Evidence Routing Model. It does **not** score battery
-health. Instead it decides how telemetry channels may be used later: freshness
-acts as a gate, battery and voltage are de-duplicated when strongly coupled,
-voltage is classified as `continuous`, `quantized`, `static` or `insufficient`,
-and outage data remains supporting evidence only.
+Dev20 moves Evidence Routing, Cycle Integrity and guarded baseline-v2 assessment
+out of the diagnostic sensor and into the coordinator, then adds a **separate**
+guarded Store at `battery_health.baselines_v2`. The older dev7/dev8 Store remains
+untouched and provisional. Only an `eligible` v2 assessment may create or alter a
+v2 record. `learning`, `blocked` and `not_required` assessments never delete or
+rewrite an existing v2 record.
 
-Dev16 adds a read-only Cycle Integrity gate. Real dev15 validation exposed a
-device whose current 24-hour regime was materially above its previous seven-day
-reference in both battery percentage and voltage. That is exactly the situation
-where a new battery cycle may have started and old 7d/30d aggregates must not be
-used for baseline learning without segmentation. Dev16 therefore detects only
-conservative recent regime upshifts; it does not increment a cycle or alter the
-health state.
+## Guarded baseline-v2 persistence
 
-Dev17 adds guarded baseline v2 in read-only `shadow_no_save` mode. It segments
-long-term daily history at conservative cycle boundaries, excludes pre-cycle
-history, distinguishes `eligible`, `learning`, `blocked` and `not_required`, and
-builds baseline confidence from the weakest required evidence dimension. It does
-not write the baseline Store, increment a battery cycle, or issue a health
-verdict.
+The persistent v2 record is intentionally conservative:
 
-Dev18 hardens that contract after real dev17 validation exposed a false cycle
-boundary: battery percentage and voltage can move together because the percentage
-is derived from the same physical voltage signal. Cycle Integrity now promotes a
-joint persistent upshift to `probable_boundary` only when Evidence Routing has
-classified battery and voltage as independent. Coupled, shared or unknown joint
-upshifts remain quarantined as `possible_boundary`. Guarded baseline v2 also
-blocks learning when voltage interpretation requires temperature context. Real
-HA validation confirmed both guards.
+- the first eligible assessment creates `cycle_generation: 1`;
+- within the same cycle the stored baseline can only rise materially (at least
+  1%); it never learns downward;
+- a `possible_boundary`, stale/blocked evidence, missing healthy anchor or
+  required temperature context cannot alter the Store;
+- a new cycle generation is created only after an `eligible` **segmented**
+  assessment exposes a different confirmed `boundary_date`;
+- seeing the same boundary again does not increment the generation twice;
+- legacy baseline records are not migrated into v2 automatically.
 
-Dev19 hardens the separate freshness gate after dev18 validation exposed another
-bounded-history effect: high-rate devices could fill the previous 512-point
-cadence Store with only minutes or hours of activity and lose the intended
-seven-day horizon. Cadence retention is now time-balanced to at most one
-representative `last_seen` timestamp per fixed 15-minute bucket. Sparse devices
-remain effectively unchanged while chatty devices retain long real silence gaps
-instead of overweighting bursts of reports.
+A left-censored bootstrap is therefore explicitly different from a known cycle
+start. It may be persisted when eligible, but its confidence remains capped by
+the guarded baseline model. Later detection of a genuinely confirmed independent
+cycle boundary starts a new generation only after enough clean post-boundary
+history exists to become eligible.
+
+Example diagnostic shape:
+
+```text
+baseline_v2:
+  mode: guarded_assessment
+  eligibility: eligible
+  confidence: 0.65
+  candidate:
+    voltage_mv: 3055
+    source: cycle_segment_upper_envelope
+    persisted: false
+  anchor: battery_upper_bootstrap
+  cycle_segment:
+    state: left_censored
+  persistence:
+    state: created
+    changed: true
+    persisted: true
+    record:
+      baseline_mv: 3055
+      confidence: 0.65
+      cycle_generation: 1
+      boundary_date: null
+      cycle_start_known: false
+```
+
+The `candidate.persisted` flag belongs to the pure assessment payload and remains
+false; actual persistence is represented separately by the `persistence` block.
+This keeps assessment and Store state distinguishable.
 
 ## Cycle integrity
 
@@ -79,71 +102,25 @@ the same physical signal twice.
 
 A much larger single-channel upshift may also be marked only as
 `possible_boundary` when the other channel is unavailable or low-information.
-
-Example shape:
-
-```text
-cycle_integrity:
-  state: probable_boundary
-  history_usable: false
-  battery:
-    reference_7d_percent: 65.0
-    reference_days: 7
-    upshift_pp: 35.0
-    signal: persistent_upshift
-  voltage:
-    reference_7d_mv: 2948
-    reference_days: 7
-    upshift_p50_mv: 289.0
-    upshift_floor_mv: 171.0
-    signal: persistent_upshift
-  reasons:
-    - independent_joint_persistent_upshift
-```
-
-The thresholds remain deliberately conservative diagnostic hypotheses. They must
-continue to be validated against the real MQTT population before any persistent
-battery-cycle change or baseline reset is allowed.
+Current or historical possible boundaries quarantine baseline learning instead
+of creating a new cycle.
 
 ## Evidence routing
 
 Each discovered device exposes an `evidence_model` diagnostic block. The model
-answers questions such as:
+decides how telemetry may be used later; it does not itself score battery health.
+It determines:
 
-- is operability evidence open, limited or blocked by freshness;
-- should battery percentage be interpreted as a level, trend or robust upper
-  envelope;
-- does voltage carry continuous information, only coarse quantized levels, or
-  effectively no changing information;
-- are battery percentage and voltage independent condition channels or the same
-  underlying signal;
-- is temperature context required/relevant/optional;
-- is `power_outage_count` neutral or supporting an instability escalation.
+- whether freshness leaves decision evidence open, limited or blocked;
+- whether battery percentage behaves as a level, trend, robust upper envelope or
+  mixed signal;
+- whether voltage is `continuous`, `quantized`, `static` or `insufficient`;
+- whether battery percentage and voltage are independent, coupled, shared or
+  still unknown;
+- whether temperature context is required, relevant, optional or unavailable;
+- whether `power_outage_count` is neutral or only supporting an escalation.
 
-Example shape:
-
-```text
-evidence_model:
-  freshness_gate: open
-  decision_readiness: ready
-  condition_channels:
-    independent_count: 1
-    double_count_guard: true
-  battery:
-    role: shared
-    processing: upper_envelope
-  voltage:
-    role: shared
-    information:
-      type: continuous
-      confidence: 1.0
-  battery_voltage_topology: shared
-  temperature_context: optional
-  outage_role: unavailable
-```
-
-`decision_readiness` means only that the evidence channels are sufficiently
-understood to permit a later health decision. It is **not** a health verdict.
+`decision_readiness` is not a health verdict.
 
 ## Freshness and outage evidence
 
@@ -153,62 +130,44 @@ The diagnostic sensor is:
 sensor.battery_health_analyzer_discovered_devices
 ```
 
-`last_seen` is treated as an operability/freshness gate, not as proof of a
-healthy battery. Diagnostics expose the current age plus device-specific cadence
-learned from live timestamp changes:
+`last_seen` is an operability/freshness gate, not proof of a healthy battery.
+Diagnostics expose the current age and device-specific learned cadence:
 
 ```text
 freshness:
   supported: true
-  last_seen: 2026-09-14T11:42:09+00:00
-  source: current
-  age_minutes: 22.2
-  reports_24h: 8
-  cadence_samples: 7
-  median_gap_minutes: 66.0
-  p90_gap_minutes: 102.0
-  age_to_p90_ratio: 0.22
+  last_seen: 2026-09-15T05:05:18+00:00
+  source: cadence_store
+  age_minutes: 17.2
+  reports_24h: 22
+  cadence_samples: 21
+  median_gap_minutes: 55.0
+  p90_gap_minutes: 55.3
+  age_to_p90_ratio: 0.31
   state: fresh
   reports_24h_semantics: time_balanced_cadence_points
   sampling_interval_minutes: 15
 ```
 
 There is deliberately no universal one- or two-hour stale threshold. When at
-least three cadence gaps are available, the current age is compared with that
-device's p90 learned gap. Until enough live samples are learned, freshness is
-`insufficient`; this is expected after first installation and does not imply a
-battery problem.
+least three cadence gaps are available, current age is compared with the
+learned device-specific p90 gap.
 
-From dev19 the cadence Store keeps at most one representative timestamp per fixed
-15-minute UTC bucket over a seven-day retention window. The 768-point hard cap
-therefore has headroom above the approximately 672 buckets required for seven
-complete days. This time-balancing prevents high-rate motion/presence devices
-from replacing a week of history with only a recent burst while preserving true
-long silence gaps. Existing dev13-dev18 Store data is loaded through the same
-backward-compatible `timestamps` schema and is compacted automatically.
+From dev19 the cadence Store keeps at most one representative timestamp per
+fixed 15-minute UTC bucket over a seven-day retention window. The 768-point hard
+cap leaves headroom above the approximately 672 buckets needed for seven complete
+days. Existing dev13-dev18 `timestamps` data is loaded through the same schema
+and compacted automatically.
 
-`reports_24h` now means retained **time-balanced cadence points** inside the last
-24 hours, not physical Zigbee packets or raw MQTT reports. It is diagnostic only
-and is not a health evidence weight. A valid live `last_seen` value is preferred;
-if live state is temporarily unavailable, the latest learned Store timestamp can
-be used as a fallback. Live `last_seen` changes update only freshness evidence and
-the diagnostic entity; they do not launch a full 24h/30d analysis cycle.
+`reports_24h` means retained **time-balanced cadence points**, not physical
+Zigbee packets or raw MQTT reports. It is diagnostic only and is not a health
+weight. Live `last_seen` changes immediately refresh freshness and the derived
+evidence/cycle/baseline assessment, but do not write the baseline-v2 Store or
+launch a full Recorder/profiler cycle.
 
-`power_outage_count` is optional and its absolute value is not health evidence.
-Only reset-aware positive deltas during the previous 24 hours are evaluated:
-
-```text
-power_outage:
-  supported: true
-  latest_count: 14
-  events_24h: 2
-  increment_transitions_24h: 2
-  resets_24h: 0
-```
-
-A missing outage counter is neutral. Counter decreases are counted as resets,
-not negative outages. Positive deltas are supporting instability evidence only;
-no outage count can independently produce a future `replace` verdict.
+`power_outage_count` is optional. Its absolute value is not health evidence; only
+reset-aware positive deltas during the previous 24 hours are supporting evidence.
+A missing counter is neutral.
 
 ## MQTT scope
 
@@ -219,24 +178,17 @@ scope: mqtt_integration_only
 source_platform: mqtt
 ```
 
-Filtering uses the Entity Registry `platform` field, not entity naming,
-`last_seen`, labels or device-name heuristics. This keeps the integration scope
-stable even when an MQTT device does not expose every optional Zigbee2MQTT
-telemetry entity.
+Filtering uses the Entity Registry `platform` field, not naming, `last_seen`,
+labels or device-name heuristics.
 
 ## Telemetry profiler
 
-The integration reads all selected battery and voltage entities in one 24-hour
-Recorder batch every 30 minutes. The diagnostic output exposes time-weighted
-p10/p50/p90, min/max/range, coverage, `history_rows` and `value_changes`.
+The integration reads selected battery and voltage entities in one 24-hour
+Recorder batch every 30 minutes. Diagnostics expose time-weighted p10/p50/p90,
+min/max/range, coverage, `history_rows` and `value_changes`.
 
-`history_rows` is not treated as a physical packet count. Recorder restart or
-restore rows can increase it without a real value change, while
-`value_changes` counts only changes between valid numeric values.
-
-On startup or integration reload, the profiler performs one additional batch
-Recorder query for the previous 30 complete local calendar days. Those states
-are reduced in memory to daily aggregates and used for:
+On startup or integration reload, one additional batch Recorder query reads the
+previous 30 complete local calendar days and reduces them to daily aggregates for:
 
 - a 7-day stable upper envelope defined as the median of daily p90 values;
 - 30-day battery behavior classification: `static`, `monotonic`, `volatile`,
@@ -244,33 +196,16 @@ are reduced in memory to daily aggregates and used for:
 - battery-percentage to voltage correlation;
 - optional voltage-to-temperature correlation.
 
-Temperature is used only when discovery finds one unambiguous same-device MQTT
-`sensor` with `device_class: temperature`. Setpoints, targets, calibration and
-offset entities are excluded. An ambiguous or missing temperature source does
-not affect core battery discovery.
+Temperature is used only when discovery finds one unambiguous safe same-device
+MQTT temperature sensor. Setpoints, targets, calibration and offset entities are
+excluded.
 
-Battery behavior and signal relationships are deliberately separate dimensions,
-so a voltage-derived percentage is not counted as independent evidence.
+## Legacy baseline status
 
-## Baseline status
-
-The baseline Store created during dev7/dev8 is preserved, but current legacy
-learning runs in shadow mode. Existing records are shown as `provisional` and
-must not be used for a health verdict.
-
-Guarded baseline v2 is a separate diagnostic path. A voltage baseline is
-considered only for informative voltage channels routed by the Evidence Model.
-Long-term history is segmented by Cycle Integrity before it can contribute to a
-candidate. Current or possible boundaries remain in learning/blocked states,
-static/context-only voltage is reported as `not_required`, and
-`temperature_context: required` blocks voltage baseline learning until that
-context can be safely applied. All candidates remain diagnostic only and
-`persisted: false`.
-
-Battery percentage still uses the current HA state when it exists. During
-startup, the latest state from the same Recorder query is used only when the
-live state is absent. An existing or trailing `unknown`/`unavailable` state is
-never skipped.
+The baseline Store created during dev7/dev8 is preserved for diagnostics only.
+Its records remain `provisional`; legacy learning stays `shadow_no_save` and
+must not feed the future health verdict. Dev20 does not migrate, overwrite or
+delete those records.
 
 ## Architecture status
 
@@ -284,13 +219,13 @@ never skipped.
 8. Detect recent battery-cycle boundaries before baseline learning. ✅ dev16
 9. Build guarded baseline v2 from cycle-clean evidence. ✅ dev17
 10. Enforce topology de-duplication and required-temperature guards. ✅ dev18
-11. Time-balance bounded cadence history for high-rate devices. 🧪 dev19
-12. Persist verified cycle/baseline state only after real validation.
-13. Expose `ok`, `weakening`, `replace` or `unknown` per device.
+11. Time-balance bounded cadence history for high-rate devices. ✅ dev19
+12. Persist guarded cycle/baseline-v2 state without downward learning. 🧪 dev20
+13. Build and validate the final `ok` / `weakening` / `replace` / `unknown` health engine.
 
 Daily profiler aggregates are intentionally not persisted yet. Cadence samples
-are persisted separately because real validation showed that Recorder is not a
-reliable source of `last_seen` report cadence in this environment.
+and guarded baseline-v2 records are persisted because they represent learned
+state that cannot be reconstructed reliably from one current Recorder window.
 
 ## Local verification
 
