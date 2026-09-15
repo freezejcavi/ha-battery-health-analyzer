@@ -236,11 +236,7 @@ async def async_get_long_term_history(
     query_start = windows[0][1]
     query_end = windows[-1][2]
     entity_ids = sorted(
-        set(
-            voltage_entity_ids
-            + battery_entity_ids
-            + temperature_entity_ids
-        )
+        set(voltage_entity_ids + battery_entity_ids + temperature_entity_ids)
     )
     states_by_entity = await _async_get_states(
         hass,

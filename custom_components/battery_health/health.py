@@ -323,10 +323,7 @@ def assess_shadow_health(
             decision_path="battery_only",
             battery_level_percent=battery_level,
         )
-    if (
-        profile.battery_behavior.confidence
-        < BATTERY_ONLY_MIN_BEHAVIOR_CONFIDENCE
-    ):
+    if profile.battery_behavior.confidence < BATTERY_ONLY_MIN_BEHAVIOR_CONFIDENCE:
         return _unknown(
             "battery_behavior_low_confidence",
             decision_path="battery_only",

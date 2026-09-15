@@ -44,10 +44,7 @@ class OperabilityTests(unittest.TestCase):
         self.assertIsNone(parse_outage_count(-1))
 
     def test_freshness_uses_device_specific_cadence(self) -> None:
-        reports = [
-            self.end - timedelta(hours=value)
-            for value in (5, 4, 3, 2, 1)
-        ]
+        reports = [self.end - timedelta(hours=value) for value in (5, 4, 3, 2, 1)]
         result = summarize_freshness(
             reports,
             self.end - timedelta(minutes=20),
@@ -61,10 +58,7 @@ class OperabilityTests(unittest.TestCase):
         self.assertLess(result.age_to_p90_ratio, 1)
 
     def test_freshness_uses_older_cadence_but_reports_24h_is_bounded(self) -> None:
-        reports = [
-            self.end - timedelta(hours=value)
-            for value in (96, 72, 48, 24)
-        ]
+        reports = [self.end - timedelta(hours=value) for value in (96, 72, 48, 24)]
         result = summarize_freshness(
             reports,
             self.end - timedelta(hours=1),
@@ -77,10 +71,7 @@ class OperabilityTests(unittest.TestCase):
         self.assertAlmostEqual(result.p90_gap_seconds, 24 * 3600)
 
     def test_freshness_late_and_stale(self) -> None:
-        reports = [
-            self.end - timedelta(hours=value)
-            for value in range(12, 2, -1)
-        ]
+        reports = [self.end - timedelta(hours=value) for value in range(12, 2, -1)]
         late = summarize_freshness(
             reports,
             self.end - timedelta(hours=2),
@@ -118,8 +109,7 @@ class OperabilityTests(unittest.TestCase):
         local_zone = timezone(timedelta(hours=2))
         current = datetime(2026, 9, 14, 11, 30, tzinfo=local_zone)
         reports = [
-            datetime(2026, 9, 14, hour, 0, tzinfo=UTC)
-            for hour in (5, 6, 7, 8, 9)
+            datetime(2026, 9, 14, hour, 0, tzinfo=UTC) for hour in (5, 6, 7, 8, 9)
         ]
         result = summarize_freshness(
             reports,

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .discovery import discover_battery_devices, is_supported_platform
 from .models import DiscoveredBatteryDevice, EntityDescriptor
@@ -20,9 +21,8 @@ def async_discover_battery_devices(
     device_names: dict[str, str | None] = {}
 
     for registry_entry in entity_registry.entities.values():
-        if (
-            registry_entry.device_id is None
-            or not is_supported_platform(registry_entry.platform)
+        if registry_entry.device_id is None or not is_supported_platform(
+            registry_entry.platform
         ):
             continue
 

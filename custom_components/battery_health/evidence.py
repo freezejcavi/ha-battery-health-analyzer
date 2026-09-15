@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from .models import BatteryHistorySummary, TelemetryProfile, VoltageHistorySummary
 from .operability import FreshnessEvidence, OutageEvidence
@@ -227,9 +228,7 @@ def build_evidence_model(
         and battery.issue is None
     )
     voltage_available = (
-        voltage is not None
-        and voltage.median_mv is not None
-        and voltage.issue is None
+        voltage is not None and voltage.median_mv is not None and voltage.issue is None
     )
 
     battery_processing = _battery_processing(profile.battery_behavior.behavior)
@@ -262,7 +261,11 @@ def build_evidence_model(
         and topology == "independent"
     ):
         independent_channels += 1
-    elif independent_channels == 0 and voltage_available and voltage_role != "unavailable":
+    elif (
+        independent_channels == 0
+        and voltage_available
+        and voltage_role != "unavailable"
+    ):
         independent_channels = 1
 
     limitations: list[str] = []

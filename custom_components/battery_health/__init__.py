@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .const import DOMAIN
+from .const import DOMAIN as DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
