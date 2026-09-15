@@ -13,6 +13,6 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/freezejcavi/ha-battery-health-analyzer/issues",
   "requirements": [],
-  "version": "0.1.0-dev.26",
-  "single_config_entry": true
+  "single_config_entry": true,
+  "version": "0.1.0-dev.26"
 }
