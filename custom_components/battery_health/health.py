@@ -1,7 +1,7 @@
 """Pure shadow health assessment for Battery Health Analyzer.
 
 This module deliberately does not publish a Home Assistant health entity and does
-not mutate persistent state.  It turns the already-guarded evidence model into a
+not mutate persistent state. It turns the already-guarded evidence model into a
 candidate state for real-world calibration.
 """
 
@@ -103,7 +103,11 @@ def _battery_level(
         return None
     if processing == "upper_envelope":
         return battery.p90_percent
-    return battery.p90_percent if battery.p90_percent is not None else battery.median_percent
+    return (
+        battery.p90_percent
+        if battery.p90_percent is not None
+        else battery.median_percent
+    )
 
 
 def assess_shadow_health(
@@ -116,11 +120,12 @@ def assess_shadow_health(
     *,
     persisted_baseline_mv: float | None,
     persisted_baseline_confidence: float | None,
+    persisted_boundary_date: str | None,
 ) -> ShadowHealthAssessment:
     """Return a conservative health candidate without publishing a verdict.
 
     Voltage-baseline decisions use the current 24-hour p90 against the guarded
-    persisted baseline.  Battery-only evidence can identify a low-confidence OK
+    persisted baseline. Battery-only evidence can identify a low-confidence OK
     or WEAKENING candidate, but intentionally cannot produce REPLACE by itself.
     """
     battery_level = _battery_level(battery, evidence_model.battery_processing)
@@ -158,8 +163,23 @@ def assess_shadow_health(
             battery_level_percent=battery_level,
         )
 
+    # A newly segmented cycle must never be evaluated against a baseline that still
+    # belongs to the previous generation. This also protects the live freshness
+    # path, which recalculates diagnostics without performing Store writes.
+    if (
+        baseline_v2.cycle_segment.state == "segmented"
+        and baseline_v2.cycle_segment.boundary_date != persisted_boundary_date
+    ):
+        return _unknown(
+            "persisted_baseline_cycle_mismatch",
+            decision_path="awaiting_cycle_baseline",
+            battery_level_percent=battery_level,
+            baseline_mv=persisted_baseline_mv,
+            limitations=("new_cycle_baseline_not_persisted",),
+        )
+
     # A guarded persisted voltage baseline is the strongest currently calibrated
-    # path.  Shared/derived signals are still counted exactly once: voltage is the
+    # path. Shared/derived signals are still counted exactly once: voltage is the
     # calibrated representation and battery percentage is not added as a second
     # condition channel.
     if (
@@ -233,7 +253,7 @@ def assess_shadow_health(
         )
 
     # A shared/derived signal without a guarded healthy baseline has no absolute
-    # scale.  Battery percentage and voltage are the same physical evidence, so
+    # scale. Battery percentage and voltage are the same physical evidence, so
     # falling back to battery percentage here would only disguise missing
     # calibration.
     if evidence_model.battery_role == "shared":
@@ -245,12 +265,9 @@ def assess_shadow_health(
         )
 
     # Continuous primary voltage without a persisted baseline is also deliberately
-    # not scored absolutely.  Supporting/context-only voltage may still leave the
+    # not scored absolutely. Supporting/context-only voltage may still leave the
     # primary battery trend usable as a cautious fallback.
-    if (
-        evidence_model.voltage_role == "primary"
-        and persisted_baseline_mv is None
-    ):
+    if evidence_model.voltage_role == "primary" and persisted_baseline_mv is None:
         return _unknown(
             "primary_voltage_without_persisted_baseline",
             decision_path="uncalibrated_voltage",
@@ -353,7 +370,12 @@ def assess_shadow_health(
         and upper_7d <= BATTERY_ONLY_LOW_UPPER_MAX_PERCENT
         and behavior in {"monotonic", "mixed"}
     ):
-        reasons.extend(("battery_level_persistently_low", "battery_trend_supports_decline"))
+        reasons.extend(
+            (
+                "battery_level_persistently_low",
+                "battery_trend_supports_decline",
+            )
+        )
         if evidence_model.outage_role == "escalating_support":
             reasons.append("outage_support_present")
             confidence = min(0.65, confidence + 0.05)
