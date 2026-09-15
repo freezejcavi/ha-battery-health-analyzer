@@ -166,7 +166,8 @@ class BatteryHealthDeviceSensor(
         """Expose HA unavailable only when the v2 condition cannot be calculated."""
         assessment = self.coordinator.health_v2_assessments.get(self._device_id)
         return (
-            assessment is not None
+            super().available
+            and assessment is not None
             and assessment.calculation_state != "unavailable"
             and assessment.condition_state in V2_CONDITION_STATES
         )
@@ -279,7 +280,7 @@ class BatteryHealthSummarySensor(
         state, _counts, _unavailable = summarize_condition_states(
             current for current, _name in self._state_by_device()
         )
-        return state is not None
+        return super().available and state is not None
 
     @property
     def native_value(self) -> str | None:
