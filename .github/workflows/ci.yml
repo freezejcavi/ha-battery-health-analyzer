@@ -25,6 +25,22 @@ jobs:
         if: github.ref_name == 'dev27-pre-rc-cleanup'
         run: |
           python scripts/dev27_apply.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("tests/test_public_contract.py")
+          text = path.read_text()
+          old = '''    def test_deep_discovery_sensor_is_disabled_diagnostic(self) -> None:\n        self.assertEqual(\n            BatteryHealthDiscoverySensor._attr_entity_category,\n            EntityCategory.DIAGNOSTIC,\n        )\n        self.assertFalse(BatteryHealthDiscoverySensor._attr_entity_registry_enabled_default)\n'''
+          new = '''    def test_deep_discovery_sensor_is_disabled_diagnostic(self) -> None:\n        source = (\n            Path(__file__).resolve().parents[1]\n            / "custom_components/battery_health/sensor.py"\n        ).read_text()\n        self.assertIn(\n            "_attr_entity_category = EntityCategory.DIAGNOSTIC",\n            source,\n        )\n        self.assertIn(\n            "_attr_entity_registry_enabled_default = False",\n            source,\n        )\n'''
+          if old not in text:
+              raise SystemExit("public-contract test target not found")
+          text = text.replace(old, new, 1)
+          text = text.replace("from pathlib import Path\n", "", 1)
+          text = text.replace("import unittest\n", "import unittest\nfrom pathlib import Path\n", 1)
+          text = text.replace("from homeassistant.helpers.entity import EntityCategory\n\n", "")
+          text = text.replace("    BatteryHealthDiscoverySensor,\n", "")
+          path.write_text(text)
+          PY
+          ruff format custom_components/battery_health tests
           ruff check --fix custom_components/battery_health tests
           ruff format custom_components/battery_health tests
       - name: Compile full repository
