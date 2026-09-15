@@ -199,6 +199,11 @@ class BatteryHealthDiscoverySensor(
                 voltage_history,
                 voltage_information,
                 freshness.state if freshness is not None else None,
+                (
+                    evidence_model.battery_voltage_topology
+                    if evidence_model is not None
+                    else "unknown"
+                ),
             )
             diagnostics["cycle_integrity"] = cycle_integrity.as_dict()
             if cycle_integrity.state in cycle_integrity_counts:
