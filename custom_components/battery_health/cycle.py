@@ -93,13 +93,17 @@ def assess_cycle_integrity(
     voltage_current: VoltageHistorySummary | None,
     voltage_information: VoltageInformation,
     freshness_state: str | None,
+    battery_voltage_topology: str,
 ) -> CycleIntegrity:
     """Detect a recent regime upshift that may indicate a new battery cycle.
 
-    This is intentionally conservative and read-only. It only blocks long-term
-    history when a sustained current level is materially above the recent
-    complete-day reference. It does not increment a battery cycle or issue a
-    health verdict.
+    Battery percentage and voltage may represent the same physical signal. A
+    joint upshift is therefore promoted to ``probable_boundary`` only when the
+    Evidence Model has established that the channels are independent. Coupled,
+    shared or unknown topology remains a quarantined ``possible_boundary``.
+
+    This helper is intentionally conservative and read-only. It never increments
+    a battery cycle or issues a health verdict.
     """
     battery_reference, battery_reference_days = _recent_reference(
         battery_daily,
@@ -202,8 +206,14 @@ def assess_cycle_integrity(
     }
 
     if battery_strong and voltage_strong:
+        if battery_voltage_topology == "independent":
+            state = "probable_boundary"
+            reasons = ("independent_joint_persistent_upshift",)
+        else:
+            state = "possible_boundary"
+            reasons = ("joint_upshift_not_independent",)
         return CycleIntegrity(
-            state="probable_boundary",
+            state=state,
             history_usable=False,
             battery_reference_percent=battery_reference,
             battery_reference_days=battery_reference_days,
@@ -214,7 +224,7 @@ def assess_cycle_integrity(
             voltage_upshift_p50_mv=voltage_upshift_p50,
             voltage_upshift_floor_mv=voltage_upshift_floor,
             voltage_signal=voltage_signal,
-            reasons=("joint_persistent_upshift",),
+            reasons=reasons,
         )
 
     if battery_only_strong and not voltage_available:
