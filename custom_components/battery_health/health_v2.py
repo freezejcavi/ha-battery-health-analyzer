@@ -227,11 +227,6 @@ def _voltage_condition(
 ) -> tuple[str, float, float, tuple[str, ...]]:
     ratio = current / reference if reference > 0 else 1.0
     delta = current - reference
-    ratio_7d = (
-        current / reference_7d
-        if reference_7d is not None and reference_7d > 0
-        else None
-    )
     sustained_ratio = (
         reference_7d / reference_30d
         if reference_7d is not None
@@ -253,7 +248,6 @@ def _voltage_condition(
             trend == "falling"
             or (sustained_ratio is not None and sustained_ratio < 0.92)
         )
-        and (ratio_7d is None or ratio_7d < 0.95)
     ):
         return "replace", ratio, delta, ("relative_voltage_deep_persistent_drop",)
     if ratio < VOLTAGE_WEAKENING_RATIO or (
@@ -404,7 +398,7 @@ def assess_relative_health_v2(
 
     use_voltage = continuous_voltage
     assessment_mode = "relative_voltage" if use_voltage else "relative_battery"
-    conservative_cap = False
+    conservative_cap = freshness_limited or readiness_limited
 
     if temperature_required:
         if battery_usable and not shared_signal:
@@ -449,6 +443,8 @@ def assess_relative_health_v2(
             reference = reference_30 or reference_7 or voltage_level
             confidence_cap = 0.72
 
+        if voltage_coverage < MIN_COVERAGE:
+            conservative_cap = True
         calc_state, confidence = _calculation_quality(
             coverage=voltage_coverage,
             reference_days=reference_days,
@@ -472,6 +468,8 @@ def assess_relative_health_v2(
             limitations.append("freshness_not_open")
         if readiness_limited:
             limitations.append("evidence_not_fully_ready")
+        if voltage_coverage < MIN_COVERAGE:
+            limitations.append("low_current_voltage_coverage")
         return RelativeHealthAssessment(
             state, calc_state, trend, confidence, assessment_mode, "voltage_mv",
             voltage_level, reference_7, reference_30, reference, ratio, delta,
@@ -492,6 +490,8 @@ def assess_relative_health_v2(
             if cycle_limited and reference_7 is not None
             else (reference_30 or reference_7 or battery_level)
         )
+        if battery_coverage < MIN_COVERAGE:
+            conservative_cap = True
         calc_state, confidence = _calculation_quality(
             coverage=battery_coverage,
             reference_days=reference_days,
@@ -517,6 +517,8 @@ def assess_relative_health_v2(
             limitations.append("freshness_not_open")
         if readiness_limited:
             limitations.append("evidence_not_fully_ready")
+        if battery_coverage < MIN_COVERAGE:
+            limitations.append("low_current_battery_coverage")
         return RelativeHealthAssessment(
             state, calc_state, trend, confidence, assessment_mode, "battery_percent",
             battery_level, reference_7, reference_30, reference, ratio, delta,
