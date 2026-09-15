@@ -28,7 +28,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          ruff check --select F \
+          ruff check \
             custom_components/battery_health/health_v2.py \
             custom_components/battery_health/coordinator.py \
             custom_components/battery_health/sensor.py \
