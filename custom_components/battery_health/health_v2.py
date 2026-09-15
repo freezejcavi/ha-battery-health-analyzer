@@ -1,13 +1,12 @@
 """Relative-history Health Model v2 for Battery Health Analyzer.
 
-Dev24 keeps this model read-only and diagnostic.  The production dev23 classifier
+Dev24 keeps this model read-only and diagnostic. The production dev23 classifier
 remains unchanged until the relative model has been validated on the real MQTT
 population.
 
-The central design rule is that a battery condition is different from our ability
-to measure it.  A calculable device therefore receives a condition state even
-when confidence is limited; data quality is reported separately through
-``calculation_state`` and ``confidence``.
+Battery condition and measurement quality are deliberately separate. A calculable
+device gets a condition even when confidence is limited; only a device with no
+usable current condition signal is ``calculation_state: unavailable``.
 """
 
 from __future__ import annotations
@@ -32,18 +31,16 @@ READY_REFERENCE_DAYS = 7
 REFERENCE_TOP_DAYS = 3
 TREND_BLOCK_DAYS = 3
 
-# Relative-voltage thresholds are deliberately tighter than the old absolute
-# baseline thresholds because ``declining`` is informational, not an instruction
-# to replace the battery.  Escalation still requires persistence.
+# Shadow calibration hypotheses. ``declining`` is informational and therefore
+# intentionally starts much earlier than an actionable weakening/replace state.
 VOLTAGE_DECLINING_RATIO = 0.98
 VOLTAGE_WEAKENING_RATIO = 0.94
 VOLTAGE_REPLACE_RATIO = 0.90
 VOLTAGE_FALLING_BLOCK_RATIO = 0.99
 VOLTAGE_RECOVERING_BLOCK_RATIO = 1.01
 
-# Percentage is not assumed to be literal remaining capacity.  Changes are used
-# relative to the device's own history and absolute level is only supporting
-# evidence for the two most severe states.
+# Battery percentage is not assumed to be literal remaining capacity. Percentage
+# levels only support a verdict after a persistent change relative to own history.
 BATTERY_DECLINING_DROP_PP = 3.0
 BATTERY_STRONG_DECLINE_DROP_PP = 10.0
 BATTERY_WEAKENING_DROP_PP = 20.0
@@ -56,12 +53,7 @@ BATTERY_RECOVERING_BLOCK_PP = 2.0
 
 @dataclass(frozen=True, slots=True)
 class RelativeHealthAssessment:
-    """One Health Model v2 assessment.
-
-    ``condition_state`` is intentionally nullable only when neither voltage nor
-    battery percentage has enough usable current data to make any calculation.
-    That is a measurement-availability outcome, not a battery-health state.
-    """
+    """One read-only Health Model v2 assessment."""
 
     condition_state: str | None
     calculation_state: str
@@ -80,7 +72,7 @@ class RelativeHealthAssessment:
     limitations: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        """Return transparent shadow diagnostics."""
+        """Return transparent diagnostics for real-world calibration."""
 
         def rounded(value: float | None, digits: int = 3) -> float | None:
             return round(value, digits) if value is not None else None
@@ -141,7 +133,7 @@ def _daily_voltage_values(
 
 
 def _upper_reference(values: Sequence[float]) -> float | None:
-    """Return median of the highest up-to-three complete-day robust values."""
+    """Return median of the highest up-to-three complete-day p90 values."""
     if not values:
         return None
     ordered = sorted((float(value) for value in values), reverse=True)
@@ -149,17 +141,28 @@ def _upper_reference(values: Sequence[float]) -> float | None:
 
 
 def _window_reference(values: Sequence[float], days: int = 7) -> float | None:
-    """Return robust recent upper envelope over the requested complete days."""
+    """Return the median complete-day p90 over a recent window."""
     if not values:
         return None
     return float(median(values[-days:]))
+
+
+def _processing_behavior(processing: str) -> str:
+    """Map Evidence Routing processing semantics back to trend semantics."""
+    if processing == "upper_envelope":
+        return "volatile"
+    if processing == "trend":
+        return "monotonic"
+    if processing == "trend_and_level":
+        return "mixed"
+    return "static"
 
 
 def _trend(
     values: Sequence[float],
     *,
     signal: str,
-    long_term_behavior: str | None = None,
+    long_term_behavior: str,
 ) -> tuple[str, float | None]:
     """Classify recent direction from adjacent three-day robust blocks."""
     if len(values) < TREND_BLOCK_DAYS * 2:
@@ -200,7 +203,7 @@ def _calculation_quality(
     forced_limited: bool,
 ) -> tuple[str, float]:
     if coverage < MIN_COVERAGE:
-        return "limited", min(0.35, max(0.0, coverage))
+        return "limited", min(0.35, max(0.0, coverage), confidence_cap)
     if reference_days < MIN_REFERENCE_DAYS:
         return "limited", min(0.35, coverage, confidence_cap)
     state = "ready" if reference_days >= READY_REFERENCE_DAYS else "limited"
@@ -238,16 +241,11 @@ def _voltage_condition(
     )
 
     if conservative_cap:
-        # Temperature-sensitive or cycle-ambiguous telemetry is still useful for
-        # relative condition, but it cannot justify an aggressive replacement
-        # verdict without compensation/confirmation.
         if ratio >= VOLTAGE_DECLINING_RATIO and trend != "falling":
-            state = "ok"
-        elif ratio < VOLTAGE_WEAKENING_RATIO and trend == "falling":
-            state = "weakening"
-        else:
-            state = "declining"
-        return state, ratio, delta, ("aggressive_escalation_guarded",)
+            return "ok", ratio, delta, ("guarded_relative_voltage_stable",)
+        if ratio < VOLTAGE_WEAKENING_RATIO and trend == "falling":
+            return "weakening", ratio, delta, ("guarded_relative_voltage_material_drop",)
+        return "declining", ratio, delta, ("aggressive_escalation_guarded",)
 
     if (
         ratio < VOLTAGE_REPLACE_RATIO
@@ -277,7 +275,12 @@ def _battery_condition(
     conservative_cap: bool,
 ) -> tuple[str, float, float, tuple[str, ...]]:
     ratio = current / reference if reference > 0 else 1.0
-    drop = max(0.0, reference - current)
+    persistent_level = (
+        max(current, reference_7d)
+        if behavior == "volatile" and reference_7d is not None
+        else current
+    )
+    drop = max(0.0, reference - persistent_level)
     sustained_drop = (
         max(0.0, reference - reference_7d)
         if reference_7d is not None
@@ -286,7 +289,7 @@ def _battery_condition(
 
     if (
         not conservative_cap
-        and current <= BATTERY_REPLACE_PERCENT
+        and persistent_level <= BATTERY_REPLACE_PERCENT
         and reference_7d is not None
         and reference_7d <= BATTERY_REPLACE_7D_PERCENT
         and reference >= 30.0
@@ -296,12 +299,12 @@ def _battery_condition(
         return "replace", ratio, current - reference, ("relative_battery_deep_persistent_drop",)
 
     if (
-        current <= BATTERY_LOW_PERCENT
+        persistent_level <= BATTERY_LOW_PERCENT
         and drop >= 5.0
         and (trend == "falling" or behavior == "monotonic")
     ) or (
         drop >= BATTERY_WEAKENING_DROP_PP
-        and current <= 50.0
+        and persistent_level <= 50.0
         and (trend == "falling" or sustained_drop >= 15.0)
     ):
         state = "declining" if conservative_cap else "weakening"
@@ -316,7 +319,12 @@ def _battery_condition(
     ):
         return "declining", ratio, current - reference, ("relative_battery_decline",)
 
-    return "ok", ratio, current - reference, ("relative_battery_stable",)
+    reason = (
+        "volatile_percentage_upper_envelope_stable"
+        if behavior == "volatile"
+        else "relative_battery_stable"
+    )
+    return "ok", ratio, current - reference, (reason,)
 
 
 def assess_relative_health_v2(
@@ -331,13 +339,7 @@ def assess_relative_health_v2(
     persisted_baseline_mv: float | None,
     persisted_baseline_confidence: float | None,
 ) -> RelativeHealthAssessment:
-    """Assess condition from the best available signal relative to own history.
-
-    Signal selection is topology-aware.  A continuous voltage channel is preferred
-    when informative.  If voltage is absent/static/quantized or a required
-    temperature context makes an independent battery channel safer, battery
-    percentage uses the same relative-history concept instead.
-    """
+    """Assess condition from the best available signal relative to own history."""
     battery_level = (
         _finite(battery_current.p90_percent)
         if battery_current is not None and battery_current.issue is None
@@ -361,19 +363,21 @@ def assess_relative_health_v2(
 
     battery_series = _daily_battery_values(battery_daily)
     voltage_series = _daily_voltage_values(voltage_daily)
+    if (
+        baseline_v2.cycle_segment.state == "segmented"
+        and baseline_v2.cycle_segment.usable_days
+    ):
+        usable_days = set(baseline_v2.cycle_segment.usable_days)
+        battery_series = [item for item in battery_series if item[0] in usable_days]
+        voltage_series = [item for item in voltage_series if item[0] in usable_days]
+
     battery_values = [value for _day, value in battery_series]
     voltage_values = [value for _day, value in voltage_series]
     battery_ref_30 = _upper_reference(battery_values)
     battery_ref_7 = _window_reference(battery_values, 7)
     voltage_ref_30 = _upper_reference(voltage_values)
     voltage_ref_7 = _window_reference(voltage_values, 7)
-
-    behavior = evidence_model.battery_processing
-    # The profiler's semantic behavior is not part of EvidenceModel, but the
-    # processing contract contains the important volatile/upper-envelope split.
-    battery_behavior = "volatile" if behavior == "upper_envelope" else (
-        "monotonic" if behavior == "trend" else "static"
-    )
+    battery_behavior = _processing_behavior(evidence_model.battery_processing)
 
     cycle_limited = (
         cycle_integrity.state != "stable"
@@ -391,17 +395,15 @@ def assess_relative_health_v2(
     continuous_voltage = (
         voltage_level is not None
         and voltage_current is not None
-        and voltage_coverage > 0
         and evidence_model.voltage_information.information == "continuous"
         and evidence_model.voltage_role in {"primary", "shared"}
     )
     battery_usable = battery_level is not None and battery_current is not None
-
     temperature_required = evidence_model.temperature_context == "required"
     shared_signal = evidence_model.battery_role == "shared"
 
     use_voltage = continuous_voltage
-    assessment_mode = "relative_voltage"
+    assessment_mode = "relative_voltage" if use_voltage else "relative_battery"
     conservative_cap = False
 
     if temperature_required:
@@ -423,12 +425,11 @@ def assess_relative_health_v2(
         trend, recent_change = _trend(
             voltage_values,
             signal="voltage_mv",
-            long_term_behavior=("volatile" if battery_behavior == "volatile" else None),
+            long_term_behavior=battery_behavior,
         )
         reference_days = len(voltage_values)
         reference_30 = voltage_ref_30
         reference_7 = voltage_ref_7
-
         persisted_usable = (
             persisted_baseline_mv is not None
             and persisted_baseline_mv > 0
@@ -472,21 +473,9 @@ def assess_relative_health_v2(
         if readiness_limited:
             limitations.append("evidence_not_fully_ready")
         return RelativeHealthAssessment(
-            condition_state=state,
-            calculation_state=calc_state,
-            trend_state=trend,
-            confidence=confidence,
-            assessment_mode=assessment_mode,
-            signal="voltage_mv",
-            current_value=voltage_level,
-            reference_7d=reference_7,
-            reference_30d=reference_30,
-            reference_used=reference,
-            ratio_to_reference=ratio,
-            delta_from_reference=delta,
-            recent_vs_previous=recent_change,
-            reasons=reasons,
-            limitations=tuple(limitations),
+            state, calc_state, trend, confidence, assessment_mode, "voltage_mv",
+            voltage_level, reference_7, reference_30, reference, ratio, delta,
+            recent_change, reasons, tuple(limitations),
         )
 
     if battery_usable and battery_level is not None:
@@ -498,17 +487,15 @@ def assess_relative_health_v2(
         reference_days = len(battery_values)
         reference_30 = battery_ref_30
         reference_7 = battery_ref_7
-        if cycle_limited and reference_7 is not None:
-            reference = reference_7
-        else:
-            reference = reference_30 or reference_7 or battery_level
-        confidence_cap = 0.60
-        if assessment_mode == "relative_battery":
-            assessment_mode = "relative_battery"
+        reference = (
+            reference_7
+            if cycle_limited and reference_7 is not None
+            else (reference_30 or reference_7 or battery_level)
+        )
         calc_state, confidence = _calculation_quality(
             coverage=battery_coverage,
             reference_days=reference_days,
-            confidence_cap=confidence_cap,
+            confidence_cap=0.60,
             forced_limited=forced_limited,
         )
         state, ratio, delta, reasons = _battery_condition(
@@ -531,37 +518,25 @@ def assess_relative_health_v2(
         if readiness_limited:
             limitations.append("evidence_not_fully_ready")
         return RelativeHealthAssessment(
-            condition_state=state,
-            calculation_state=calc_state,
-            trend_state=trend,
-            confidence=confidence,
-            assessment_mode=assessment_mode,
-            signal="battery_percent",
-            current_value=battery_level,
-            reference_7d=reference_7,
-            reference_30d=reference_30,
-            reference_used=reference,
-            ratio_to_reference=ratio,
-            delta_from_reference=delta,
-            recent_vs_previous=recent_change,
-            reasons=reasons,
-            limitations=tuple(limitations),
+            state, calc_state, trend, confidence, assessment_mode, "battery_percent",
+            battery_level, reference_7, reference_30, reference, ratio, delta,
+            recent_change, reasons, tuple(limitations),
         )
 
     return RelativeHealthAssessment(
-        condition_state=None,
-        calculation_state="unavailable",
-        trend_state="insufficient",
-        confidence=0.0,
-        assessment_mode="unavailable",
-        signal=None,
-        current_value=None,
-        reference_7d=None,
-        reference_30d=None,
-        reference_used=None,
-        ratio_to_reference=None,
-        delta_from_reference=None,
-        recent_vs_previous=None,
-        reasons=("no_usable_current_condition_signal",),
-        limitations=tuple(evidence_model.limitations),
+        None,
+        "unavailable",
+        "insufficient",
+        0.0,
+        "unavailable",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        ("no_usable_current_condition_signal",),
+        tuple(evidence_model.limitations),
     )
