@@ -85,7 +85,7 @@ def voltage_information(kind: str = "continuous") -> VoltageInformation:
 class CycleIntegrityTests(unittest.TestCase):
     """Verify cycle-boundary gating without producing a health verdict."""
 
-    def test_joint_persistent_upshift_is_probable_boundary(self) -> None:
+    def test_independent_joint_persistent_upshift_is_probable_boundary(self) -> None:
         result = assess_cycle_integrity(
             daily_battery(65),
             daily_voltage(2948),
@@ -93,6 +93,7 @@ class CycleIntegrityTests(unittest.TestCase):
             voltage_summary(3237, p10=3119, p90=3250),
             voltage_information(),
             "fresh",
+            "independent",
         )
 
         self.assertEqual(result.state, "probable_boundary")
@@ -101,6 +102,22 @@ class CycleIntegrityTests(unittest.TestCase):
         self.assertEqual(result.voltage_signal, "persistent_upshift")
         self.assertAlmostEqual(result.battery_upshift_pp or 0, 35)
         self.assertAlmostEqual(result.voltage_upshift_p50_mv or 0, 289)
+        self.assertEqual(result.reasons, ("independent_joint_persistent_upshift",))
+
+    def test_coupled_joint_upshift_is_only_possible_boundary(self) -> None:
+        result = assess_cycle_integrity(
+            daily_battery(65),
+            daily_voltage(2948),
+            battery_summary(100, value_range=0),
+            voltage_summary(3237, p10=3119, p90=3250),
+            voltage_information(),
+            "fresh",
+            "coupled",
+        )
+
+        self.assertEqual(result.state, "possible_boundary")
+        self.assertFalse(result.history_usable)
+        self.assertEqual(result.reasons, ("joint_upshift_not_independent",))
 
     def test_normal_current_level_is_stable(self) -> None:
         result = assess_cycle_integrity(
@@ -110,6 +127,7 @@ class CycleIntegrityTests(unittest.TestCase):
             voltage_summary(3039, p10=3038, p90=3040),
             voltage_information(),
             "fresh",
+            "unknown",
         )
 
         self.assertEqual(result.state, "stable")
@@ -123,6 +141,7 @@ class CycleIntegrityTests(unittest.TestCase):
             None,
             voltage_information("insufficient"),
             "fresh",
+            "unknown",
         )
 
         self.assertEqual(result.state, "possible_boundary")
@@ -137,6 +156,7 @@ class CycleIntegrityTests(unittest.TestCase):
             None,
             voltage_information("insufficient"),
             "fresh",
+            "unknown",
         )
 
         self.assertEqual(result.state, "stable")
@@ -151,6 +171,7 @@ class CycleIntegrityTests(unittest.TestCase):
             voltage_summary(3000, p10=3000, p90=3000),
             voltage_information("static"),
             "fresh",
+            "unknown",
         )
 
         self.assertEqual(result.state, "stable")
@@ -164,6 +185,7 @@ class CycleIntegrityTests(unittest.TestCase):
             voltage_summary(3237, p10=3119, p90=3250),
             voltage_information(),
             "insufficient",
+            "independent",
         )
 
         self.assertEqual(result.state, "insufficient")
@@ -178,6 +200,7 @@ class CycleIntegrityTests(unittest.TestCase):
             voltage_summary(3237, p10=3119, p90=3250),
             voltage_information(),
             "fresh",
+            "independent",
         )
 
         self.assertEqual(result.state, "insufficient")
