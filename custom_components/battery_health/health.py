@@ -120,7 +120,6 @@ def assess_shadow_health(
     *,
     persisted_baseline_mv: float | None,
     persisted_baseline_confidence: float | None,
-    persisted_boundary_date: str | None,
 ) -> ShadowHealthAssessment:
     """Return a conservative health candidate without publishing a verdict.
 
@@ -163,19 +162,19 @@ def assess_shadow_health(
             battery_level_percent=battery_level,
         )
 
-    # A newly segmented cycle must never be evaluated against a baseline that still
-    # belongs to the previous generation. This also protects the live freshness
-    # path, which recalculates diagnostics without performing Store writes.
+    # When a new historical boundary has been confirmed but the clean post-boundary
+    # segment is not yet eligible, an existing Store record still belongs to the
+    # previous cycle. Never compare the new cycle against that old baseline.
     if (
         baseline_v2.cycle_segment.state == "segmented"
-        and baseline_v2.cycle_segment.boundary_date != persisted_boundary_date
+        and baseline_v2.eligibility != "eligible"
     ):
         return _unknown(
-            "persisted_baseline_cycle_mismatch",
+            "new_cycle_baseline_not_ready",
             decision_path="awaiting_cycle_baseline",
             battery_level_percent=battery_level,
             baseline_mv=persisted_baseline_mv,
-            limitations=("new_cycle_baseline_not_persisted",),
+            limitations=("previous_cycle_baseline_not_usable",),
         )
 
     # A guarded persisted voltage baseline is the strongest currently calibrated
