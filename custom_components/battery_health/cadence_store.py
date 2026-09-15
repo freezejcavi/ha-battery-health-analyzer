@@ -100,6 +100,8 @@ class CadenceStore:
         normalized = parse_last_seen(timestamp)
         if normalized is None:
             return False
+        if not now - CADENCE_RETENTION <= normalized <= now + FUTURE_TOLERANCE:
+            return False
 
         previous = self._timestamps.get(device_id, [])
         # Fast path for chatty devices: update only the current bucket's latest
