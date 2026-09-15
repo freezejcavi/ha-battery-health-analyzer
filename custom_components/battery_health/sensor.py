@@ -12,12 +12,9 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .baseline_v2 import assess_guarded_baseline_v2
 from .cadence_store import CADENCE_SAMPLE_INTERVAL_MINUTES
 from .const import DOMAIN, NAME, SOURCE_PLATFORM
 from .coordinator import BatteryHealthCoordinator
-from .cycle import assess_cycle_integrity
-from .evidence import build_evidence_model, classify_voltage_information
 
 
 async def async_setup_entry(
@@ -32,7 +29,7 @@ async def async_setup_entry(
 class BatteryHealthDiscoverySensor(
     CoordinatorEntity[BatteryHealthCoordinator], SensorEntity
 ):
-    """Expose read-only discovery and telemetry profiling diagnostics."""
+    """Expose discovery, telemetry and guarded persistence diagnostics."""
 
     _attr_has_entity_name = True
     _attr_name = "Discovered devices"
@@ -58,7 +55,7 @@ class BatteryHealthDiscoverySensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return compact read-only telemetry diagnostics."""
+        """Return compact telemetry and guarded baseline diagnostics."""
         snapshot = self.coordinator.data
         operability = self.coordinator.operability
         devices = snapshot.devices
@@ -83,6 +80,7 @@ class BatteryHealthDiscoverySensor(
             "possible_boundary": 0,
             "insufficient": 0,
         }
+        persistence_counts: dict[str, int] = {}
 
         for device in devices:
             diagnostics = device.as_dict()
@@ -168,71 +166,57 @@ class BatteryHealthDiscoverySensor(
                 profile.as_dict() if profile is not None else None
             )
 
-            battery_daily = {}
-            voltage_daily = {}
-            long_term = self.coordinator._long_term_history
-            if long_term is not None:
-                if device.battery_entity_id is not None:
-                    battery_daily = long_term.battery_daily.get(
-                        device.battery_entity_id,
-                        {},
-                    )
-                if device.voltage_entity_id is not None:
-                    voltage_daily = long_term.voltage_daily.get(
-                        device.voltage_entity_id,
-                        {},
-                    )
-            voltage_information = classify_voltage_information(voltage_daily)
-
-            evidence_model = None
-            if profile is not None:
-                evidence_model = build_evidence_model(
-                    profile,
-                    battery_history,
-                    voltage_history,
-                    freshness,
-                    outage,
-                    voltage_information,
-                )
-                diagnostics["evidence_model"] = evidence_model.as_dict()
-                if evidence_model.decision_readiness in evidence_readiness:
-                    evidence_readiness[evidence_model.decision_readiness] += 1
-            else:
-                diagnostics["evidence_model"] = None
-
-            cycle_integrity = assess_cycle_integrity(
-                battery_daily,
-                voltage_daily,
-                battery_history,
-                voltage_history,
-                voltage_information,
-                freshness.state if freshness is not None else None,
-                (
-                    evidence_model.battery_voltage_topology
-                    if evidence_model is not None
-                    else "unknown"
-                ),
+            evidence_model = self.coordinator.evidence_models.get(device.device_id)
+            diagnostics["evidence_model"] = (
+                evidence_model.as_dict() if evidence_model is not None else None
             )
-            diagnostics["cycle_integrity"] = cycle_integrity.as_dict()
-            if cycle_integrity.state in cycle_integrity_counts:
+            if (
+                evidence_model is not None
+                and evidence_model.decision_readiness in evidence_readiness
+            ):
+                evidence_readiness[evidence_model.decision_readiness] += 1
+
+            cycle_integrity = self.coordinator.cycle_integrity.get(device.device_id)
+            diagnostics["cycle_integrity"] = (
+                cycle_integrity.as_dict() if cycle_integrity is not None else None
+            )
+            if (
+                cycle_integrity is not None
+                and cycle_integrity.state in cycle_integrity_counts
+            ):
                 cycle_integrity_counts[cycle_integrity.state] += 1
 
-            if evidence_model is not None:
-                baseline_v2 = assess_guarded_baseline_v2(
-                    battery_daily,
-                    voltage_daily,
-                    voltage_history,
-                    evidence_model,
-                    cycle_integrity,
-                    voltage_information,
+            baseline_v2 = self.coordinator.baseline_v2_assessments.get(device.device_id)
+            persistence = self.coordinator.baseline_v2_persistence.get(device.device_id)
+            if baseline_v2 is not None:
+                baseline_v2_diagnostics = baseline_v2.as_dict()
+                baseline_v2_diagnostics["persistence"] = (
+                    persistence.as_dict()
+                    if persistence is not None
+                    else {
+                        "state": "not_evaluated",
+                        "changed": False,
+                        "persisted": device.device_id
+                        in self.coordinator.baseline_v2_records,
+                        "record": (
+                            self.coordinator.baseline_v2_records[device.device_id].as_dict()
+                            if device.device_id in self.coordinator.baseline_v2_records
+                            else None
+                        ),
+                    }
                 )
-                diagnostics["baseline_v2"] = baseline_v2.as_dict()
+                diagnostics["baseline_v2"] = baseline_v2_diagnostics
                 if baseline_v2.eligibility in baseline_v2_counts:
                     baseline_v2_counts[baseline_v2.eligibility] += 1
                 if baseline_v2.cycle_segment.state in cycle_segment_counts:
                     cycle_segment_counts[baseline_v2.cycle_segment.state] += 1
             else:
                 diagnostics["baseline_v2"] = None
+
+            if persistence is not None:
+                persistence_counts[persistence.state] = (
+                    persistence_counts.get(persistence.state, 0) + 1
+                )
 
             device_diagnostics.append(diagnostics)
 
@@ -285,5 +269,9 @@ class BatteryHealthDiscoverySensor(
             "cycle_integrity": cycle_integrity_counts,
             "baseline_v2_eligibility": baseline_v2_counts,
             "cycle_segments": cycle_segment_counts,
+            "baseline_v2_persisted_records": len(
+                self.coordinator.baseline_v2_records
+            ),
+            "baseline_v2_persistence": persistence_counts,
             "devices": device_diagnostics,
         }
