@@ -28,6 +28,7 @@ from .evidence import (
 )
 from .ha_discovery import async_discover_battery_devices
 from .health_v2 import RelativeHealthAssessment, assess_relative_health_v2
+from .integrity_store import IntegrityIncidentRecord, IntegrityIncidentStore
 from .models import (
     BaselineLearningResult,
     BatteryHealthSnapshot,
@@ -90,6 +91,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         )
         self._baseline_store = BaselineStore(hass)
         self._baseline_v2_store = BaselineV2Store(hass)
+        self._integrity_incident_store = IntegrityIncidentStore(hass)
         self._cadence_store = CadenceStore(hass)
         self._long_term_history: LongTermHistorySnapshot | None = None
         self._last_seen_unsub = None
@@ -101,16 +103,23 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.baseline_v2_persistence: dict[str, BaselineV2PersistenceResult] = {}
         self.health_v2_assessments: dict[str, RelativeHealthAssessment] = {}
         self.telemetry_integrity: dict[str, TelemetryIntegrityAssessment] = {}
+        self.integrity_incident_states: dict[str, str] = {}
 
     @property
     def baseline_v2_records(self) -> dict[str, BaselineV2Record]:
         """Expose the current guarded Store snapshot for diagnostics."""
         return self._baseline_v2_store.records
 
+    @property
+    def integrity_incident_records(self) -> dict[str, IntegrityIncidentRecord]:
+        """Expose active telemetry-integrity incidents for diagnostics."""
+        return self._integrity_incident_store.records
+
     async def async_initialize(self) -> None:
         """Load existing persistent state before the first refresh."""
         await self._baseline_store.async_load()
         await self._baseline_v2_store.async_load()
+        await self._integrity_incident_store.async_load()
         await self._cadence_store.async_load()
 
     def _evaluate_device_decision(
@@ -166,7 +175,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
                     temperature_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT),
                 )
 
-        integrity = assess_telemetry_integrity(
+        raw_integrity = assess_telemetry_integrity(
             battery_history,
             voltage_history,
             battery_daily,
@@ -174,6 +183,21 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             outage,
             current_temperature_c,
         )
+        report_at = freshness.last_seen if freshness is not None else None
+        if persist:
+            incident_result = self._integrity_incident_store.apply(
+                device.device_id,
+                raw_integrity,
+                report_at,
+                observed_at,
+            )
+            integrity = incident_result.effective_assessment
+            self.integrity_incident_states[device.device_id] = incident_result.state
+        else:
+            integrity = self._integrity_incident_store.effective_assessment(
+                device.device_id,
+                raw_integrity,
+            )
         self.telemetry_integrity[device.device_id] = integrity
 
         voltage_information = classify_voltage_information(voltage_daily)
@@ -361,6 +385,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             self._last_seen_unsub = None
         await self._cadence_store.async_save()
         await self._baseline_v2_store.async_save()
+        await self._integrity_incident_store.async_save()
         await super().async_shutdown()
 
     async def _async_update_data(self) -> BatteryHealthSnapshot:
@@ -505,6 +530,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.baseline_v2_persistence = {}
         self.health_v2_assessments = {}
         self.telemetry_integrity = {}
+        self.integrity_incident_states = {}
         for device in devices:
             profile = telemetry_profiles.get(device.device_id)
             if profile is None:
@@ -519,5 +545,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
 
         if self._baseline_v2_store.dirty:
             await self._baseline_v2_store.async_save()
+        if self._integrity_incident_store.dirty:
+            await self._integrity_incident_store.async_save()
 
         return snapshot

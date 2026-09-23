@@ -91,6 +91,8 @@ class OutageEvidence:
     issue: str | None = None
     max_positive_delta_24h: int | None = None
     max_positive_delta_at: datetime | None = None
+    max_positive_delta_7d: int | None = None
+    max_positive_delta_7d_at: datetime | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return compact diagnostics for the HA state attribute."""
@@ -106,6 +108,12 @@ class OutageEvidence:
             "max_positive_delta_at": (
                 self.max_positive_delta_at.isoformat()
                 if self.max_positive_delta_at is not None
+                else None
+            ),
+            "max_positive_delta_7d": self.max_positive_delta_7d,
+            "max_positive_delta_7d_at": (
+                self.max_positive_delta_7d_at.isoformat()
+                if self.max_positive_delta_7d_at is not None
                 else None
             ),
             "issue": self.issue,

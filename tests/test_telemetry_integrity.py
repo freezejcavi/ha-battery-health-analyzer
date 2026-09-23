@@ -64,6 +64,7 @@ def outage(
     *,
     events: int = 0,
     max_delta: int | None = None,
+    max_delta_7d: int | None = None,
 ) -> OutageEvidence:
     return OutageEvidence(
         supported=True,
@@ -74,6 +75,7 @@ def outage(
         history_rows=2,
         valid_rows=2,
         max_positive_delta_24h=max_delta,
+        max_positive_delta_7d=max_delta_7d,
     )
 
 
@@ -160,6 +162,19 @@ class TelemetryIntegrityTests(unittest.TestCase):
         self.assertIn("battery_voltage_contradiction", result.findings)
         self.assertIn("temperature_protocol_sentinel", result.findings)
         self.assertIn("outage_counter_implausible_jump", result.findings)
+
+    def test_rad_anomaly_stays_service_required_after_24h_window(self) -> None:
+        result = assess_telemetry_integrity(
+            battery_summary(0),
+            voltage_summary(3100),
+            battery_daily(),
+            voltage_daily(),
+            outage(events=0, max_delta=None, max_delta_7d=26650),
+            24.0,
+        )
+        self.assertEqual(result.state, "service_required")
+        self.assertIn("outage_counter_implausible_jump", result.findings)
+        self.assertIn("outage_counter_jump_retained_7d", result.findings)
 
     def test_two_hard_metadata_failures_require_service(self) -> None:
         result = assess_telemetry_integrity(

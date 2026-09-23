@@ -511,6 +511,8 @@ class BatteryHealthDiscoverySensor(
             "guarded": 0,
             "service_required": 0,
         }
+        integrity_incident_active = 0
+        integrity_incident_transitions: dict[str, int] = {}
         health_v2_conditions = {state: 0 for state in V2_CONDITION_STATES}
         health_v2_calculation = {state: 0 for state in V2_CALCULATION_STATES}
         health_v2_trends = {state: 0 for state in V2_TREND_STATES}
@@ -606,6 +608,21 @@ class BatteryHealthDiscoverySensor(
                 and integrity.state in telemetry_integrity_counts
             ):
                 telemetry_integrity_counts[integrity.state] += 1
+
+            incident = self.coordinator.integrity_incident_records.get(device.device_id)
+            diagnostics["integrity_incident"] = (
+                incident.as_dict() if incident is not None else None
+            )
+            incident_transition = self.coordinator.integrity_incident_states.get(
+                device.device_id
+            )
+            diagnostics["integrity_incident_transition"] = incident_transition
+            if incident is not None:
+                integrity_incident_active += 1
+            if incident_transition is not None:
+                integrity_incident_transitions[incident_transition] = (
+                    integrity_incident_transitions.get(incident_transition, 0) + 1
+                )
 
             evidence_model = self.coordinator.evidence_models.get(device.device_id)
             diagnostics["evidence_model"] = (
@@ -752,6 +769,8 @@ class BatteryHealthDiscoverySensor(
                 evidence.events_24h or 0 for evidence in operability.outages.values()
             ),
             "telemetry_integrity": telemetry_integrity_counts,
+            "integrity_incidents_active": integrity_incident_active,
+            "integrity_incident_transitions": integrity_incident_transitions,
             "evidence_readiness": evidence_readiness,
             "cycle_integrity": cycle_integrity_counts,
             "baseline_v2_eligibility": baseline_v2_counts,
