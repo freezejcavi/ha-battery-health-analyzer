@@ -94,6 +94,30 @@ class PublicContractTests(unittest.TestCase):
         self.assertEqual(attrs["change_unit"], "pp")
         self.assertIn("temperature", attrs["note"].lower())
 
+    def test_service_required_replace_explains_physical_inspection(self) -> None:
+        assessment = RelativeHealthAssessment(
+            "replace",
+            "limited",
+            "insufficient",
+            0.5,
+            "telemetry_integrity",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ("telemetry_service_required",),
+            ("physical_battery_inspection_required",),
+        )
+        attrs = _public_health_attributes(assessment)
+        self.assertEqual(attrs["basis"], "telemetry_integrity")
+        self.assertEqual(attrs["calculation"], "limited")
+        self.assertIn("physical inspection", attrs["reason"].lower())
+        self.assertIn("telemetry", attrs["note"].lower())
+
     def test_deep_discovery_sensor_is_disabled_diagnostic(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]
