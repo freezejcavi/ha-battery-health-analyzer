@@ -20,6 +20,7 @@ from .operability import (
 )
 
 CADENCE_WINDOW = timedelta(days=7)
+OUTAGE_INCIDENT_WINDOW = timedelta(days=7)
 
 
 async def _async_get_states(
@@ -100,6 +101,7 @@ async def async_get_operability_history(
     cadence_timestamps = cadence_timestamps or {}
     window_start = window_end - HISTORY_WINDOW
     cadence_window_start = window_end - CADENCE_WINDOW
+    outage_incident_start = window_end - OUTAGE_INCIDENT_WINDOW
 
     # last_seen cadence is intentionally not learned from Recorder. Real HA
     # validation showed timestamp entities yielding only a start/current row.
@@ -108,7 +110,7 @@ async def async_get_operability_history(
     states_by_entity = await _async_get_states(
         hass,
         outage_entity_ids,
-        window_start,
+        outage_incident_start,
         window_end,
     )
 
@@ -157,6 +159,17 @@ async def async_get_operability_history(
             window_start,
             window_end,
             latest_count=latest_count,
+        )
+        incident_evidence = summarize_outage_history(
+            points,
+            outage_incident_start,
+            window_end,
+            latest_count=latest_count,
+        )
+        evidence = replace(
+            evidence,
+            max_positive_delta_7d=incident_evidence.max_positive_delta_24h,
+            max_positive_delta_7d_at=incident_evidence.max_positive_delta_at,
         )
         if current_state is not None and latest_count is None:
             evidence = replace(evidence, latest_count=None)
