@@ -8,11 +8,12 @@ The integration is intentionally limited to battery devices provided by Home Ass
 
 ## Release status
 
-**Current release candidate: `0.1.0-rc.1`**
+**Current release candidate: `0.1.0-rc.2`**
 
-RC1 is a release/publishing milestone built directly on the accepted `0.1.0-dev.27`
-runtime contract. It does not retune Health Model v2, alter Store schemas, widen MQTT
-scope or change freshness/cycle semantics.
+RC2 keeps the accepted Health Model v2 thresholds, Store schema, MQTT scope and
+freshness/cycle semantics, while adding a cross-signal **Telemetry Integrity** layer.
+That layer detects contradictory or implausible runtime telemetry before it can contaminate
+baseline learning or produce a misleading battery-condition verdict.
 
 The pre-RC contract was validated on a real Home Assistant installation with 31 MQTT
 battery devices. The accepted snapshot contained:
@@ -122,7 +123,8 @@ The condition states mean:
 - `ok`: current robust regime remains close to its own reference;
 - `declining`: early persistent deterioration relative to own history;
 - `weakening`: material persistent deterioration;
-- `replace`: deep persistent deterioration with corroborating multi-day evidence.
+- `replace`: deep persistent deterioration **or a telemetry-integrity condition that
+  requires physical battery/service inspection**.
 
 Calculation quality is separate from battery condition:
 
@@ -135,6 +137,26 @@ Trend is also independent of condition and can be `stable`, `falling`, `recoveri
 `volatile` or `insufficient`.
 
 ## Safety layers
+
+### Telemetry Integrity
+
+Telemetry Integrity runs before the battery-condition model. It cross-checks available
+battery, voltage, diagnostic temperature and power-outage evidence and classifies the
+runtime input as:
+
+- `trusted`: no material contradiction detected;
+- `guarded`: suspicious telemetry exists, so the condition remains conservative and
+  calculation quality is limited;
+- `service_required`: multiple severe or corroborating anomalies require a physical
+  battery/device inspection.
+
+A service-required result publishes `replace` with a telemetry-integrity basis. In this
+path, `replace` means **inspect the device, cells and contacts**; it does not claim that
+every installed cell is proven exhausted. Individual cells can therefore be measured and
+only the weak or failed cell(s) replaced when appropriate.
+
+Guarded and service-required telemetry cannot create or update the persisted baseline-v2
+record, so one corrupted report cannot teach the model a bad reference.
 
 ### Evidence Routing
 
@@ -173,7 +195,7 @@ is the sole safe candidate.
 Temperature-sensitive voltage paths may remain calculable but are marked `limited`, or the
 model may bypass voltage and use battery percentage when that is safer.
 
-Full temperature normalization is not part of RC1.
+Full temperature normalization is not part of RC2.
 
 ## Deep diagnostics
 
@@ -194,7 +216,7 @@ deep payload contains canonical production diagnostics such as:
 - `health_thresholds`
 - full per-device discovery, telemetry, evidence, cycle and baseline diagnostics
 
-Temporary legacy/shadow parity aliases were removed before RC1.
+Temporary legacy/shadow parity aliases were removed before RC1 and remain absent in RC2.
 
 ## Persistence
 
@@ -209,7 +231,7 @@ The health verdict itself is derived and is not stored separately.
 The older dev7/dev8 baseline Store remains read-only and provisional for diagnostics. It does
 not feed the production Health Model v2.
 
-## Known limitations of RC1
+## Known limitations of RC2
 
 - MQTT integration only; Zigbee2MQTT is the primary validated environment.
 - Thresholds are conservative calibration hypotheses, not chemistry-specific battery models.
@@ -245,8 +267,8 @@ python -m unittest discover -s tests -v
 
 Separate validation jobs run Home Assistant Hassfest and HACS validation.
 
-The final pre-RC development head passed compile, full Ruff, 142/142 unit tests, Hassfest and
-HACS validation before the RC1 version/documentation-only release-prep change.
+The RC2 development head passed repository compile, full Ruff, the complete unit-test suite,
+Hassfest and HACS validation before release preparation.
 
 ## Compatibility target
 

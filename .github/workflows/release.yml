@@ -1,0 +1,82 @@
+name: Publish release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - custom_components/battery_health/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read manifest version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("custom_components/battery_health/manifest.json").read_text())
+          print(data["version"])
+          PY
+          )"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether release already exists
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          text = Path("CHANGELOG.md").read_text()
+          marker = f"## {version}"
+          if marker not in text:
+              raise SystemExit(f"Missing CHANGELOG section for {version}")
+
+          section = text.split(marker, 1)[1]
+          section = section.split("\n## ", 1)[0].strip()
+          Path("release-notes.md").write_text(section + "\n")
+          PY
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          EXTRA_ARGS=()
+          if [[ "$VERSION" == *-* ]]; then
+            EXTRA_ARGS+=(--prerelease)
+          fi
+          gh release create "$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "Battery Health Analyzer $VERSION" \
+            --notes-file release-notes.md \
+            "${EXTRA_ARGS[@]}"
