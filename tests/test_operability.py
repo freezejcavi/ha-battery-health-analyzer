@@ -131,6 +131,11 @@ class OperabilityTests(unittest.TestCase):
         self.assertEqual(result.events_24h, 4)
         self.assertEqual(result.increment_transitions_24h, 3)
         self.assertEqual(result.resets_24h, 1)
+        self.assertEqual(result.max_positive_delta_24h, 2)
+        self.assertEqual(
+            result.max_positive_delta_at,
+            self.start + timedelta(hours=8),
+        )
         self.assertIsNone(result.issue)
 
     def test_outage_partial_unsupported_and_no_history(self) -> None:

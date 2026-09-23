@@ -15,6 +15,9 @@ from custom_components.battery_health.models import (
     BatteryHistorySummary,
     VoltageHistorySummary,
 )
+from custom_components.battery_health.telemetry_integrity import (
+    TelemetryIntegrityAssessment,
+)
 
 
 def battery_summary(value: float, *, coverage: float = 1.0) -> BatteryHistorySummary:
@@ -342,6 +345,71 @@ class RelativeHealthGuardTests(unittest.TestCase):
         )
         self.assertEqual(result.condition_state, "ok")
         self.assertEqual(result.calculation_state, "limited")
+
+    def test_service_required_integrity_forces_replace_for_physical_inspection(
+        self,
+    ) -> None:
+        integrity = TelemetryIntegrityAssessment(
+            state="service_required",
+            battery_trust="rejected",
+            voltage_trust="trusted",
+            temperature_trust="rejected",
+            outage_trust="rejected",
+            findings=(
+                "battery_abrupt_collapse",
+                "temperature_protocol_sentinel",
+                "outage_counter_implausible_jump",
+            ),
+            limitations=("physical_battery_inspection_required",),
+        )
+        result = assess_relative_health_v2(
+            battery_summary(100),
+            voltage_summary(3100),
+            battery_daily([100] * 30),
+            voltage_daily([3100] * 30),
+            evidence(),
+            cycle(),
+            baseline(eligibility="not_required"),
+            persisted_baseline_mv=None,
+            persisted_baseline_confidence=None,
+            integrity=integrity,
+        )
+        self.assertEqual(result.condition_state, "replace")
+        self.assertEqual(result.calculation_state, "limited")
+        self.assertEqual(result.assessment_mode, "telemetry_integrity")
+        self.assertIn("telemetry_service_required", result.reasons)
+
+    def test_guarded_integrity_limits_normal_health_calculation(self) -> None:
+        integrity = TelemetryIntegrityAssessment(
+            state="guarded",
+            battery_trust="suspect",
+            voltage_trust="trusted",
+            temperature_trust="trusted",
+            outage_trust="trusted",
+            findings=(
+                "battery_abrupt_collapse",
+                "battery_voltage_contradiction",
+            ),
+            limitations=("telemetry_integrity_guarded",),
+        )
+        result = assess_relative_health_v2(
+            battery_summary(0),
+            voltage_summary(3100),
+            battery_daily([100] * 30),
+            voltage_daily([3100] * 30),
+            evidence(
+                voltage_role="context_only",
+                voltage_information="static",
+            ),
+            cycle(),
+            baseline(eligibility="not_required"),
+            persisted_baseline_mv=None,
+            persisted_baseline_confidence=None,
+            integrity=integrity,
+        )
+        self.assertEqual(result.calculation_state, "limited")
+        self.assertNotEqual(result.condition_state, "replace")
+        self.assertIn("telemetry_integrity_guarded", result.limitations)
 
     def test_no_current_signal_is_measurement_unavailable_not_unknown_condition(
         self,
