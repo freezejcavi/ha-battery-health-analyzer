@@ -20,6 +20,7 @@ from .baseline_v2 import BaselineV2Assessment
 from .cycle import CycleIntegrity
 from .evidence import EvidenceModel
 from .models import BatteryHistorySummary, VoltageHistorySummary
+from .telemetry_integrity import TelemetryIntegrityAssessment
 
 CONDITION_STATES = ("ok", "declining", "weakening", "replace")
 CALCULATION_STATES = ("ready", "limited", "unavailable")
@@ -348,8 +349,27 @@ def assess_relative_health_v2(
     *,
     persisted_baseline_mv: float | None,
     persisted_baseline_confidence: float | None,
+    integrity: TelemetryIntegrityAssessment | None = None,
 ) -> RelativeHealthAssessment:
     """Assess condition from the best available signal relative to own history."""
+    if integrity is not None and integrity.state == "service_required":
+        return RelativeHealthAssessment(
+            "replace",
+            "limited",
+            "insufficient",
+            0.50,
+            "telemetry_integrity",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ("telemetry_service_required", *integrity.findings),
+            integrity.limitations,
+        )
     battery_level = (
         _finite(battery_current.p90_percent)
         if battery_current is not None and battery_current.issue is None
@@ -400,7 +420,13 @@ def assess_relative_health_v2(
     )
     freshness_limited = evidence_model.freshness_gate != "open"
     readiness_limited = evidence_model.decision_readiness != "ready"
-    forced_limited = cycle_limited or freshness_limited or readiness_limited
+    integrity_guarded = integrity is not None and integrity.state == "guarded"
+    forced_limited = (
+        cycle_limited
+        or freshness_limited
+        or readiness_limited
+        or integrity_guarded
+    )
 
     continuous_voltage = (
         voltage_level is not None
@@ -414,7 +440,7 @@ def assess_relative_health_v2(
 
     use_voltage = continuous_voltage
     assessment_mode = "relative_voltage" if use_voltage else "relative_battery"
-    conservative_cap = freshness_limited or readiness_limited
+    conservative_cap = freshness_limited or readiness_limited or integrity_guarded
 
     if temperature_required:
         if battery_usable and not shared_signal:
@@ -486,6 +512,8 @@ def assess_relative_health_v2(
             limitations.append("evidence_not_fully_ready")
         if voltage_coverage < MIN_COVERAGE:
             limitations.append("low_current_voltage_coverage")
+        if integrity_guarded:
+            limitations.append("telemetry_integrity_guarded")
         return RelativeHealthAssessment(
             state,
             calc_state,
@@ -547,6 +575,8 @@ def assess_relative_health_v2(
             limitations.append("evidence_not_fully_ready")
         if battery_coverage < MIN_COVERAGE:
             limitations.append("low_current_battery_coverage")
+        if integrity_guarded:
+            limitations.append("telemetry_integrity_guarded")
         return RelativeHealthAssessment(
             state,
             calc_state,
