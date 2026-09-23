@@ -39,7 +39,7 @@ def assessment(
 
 
 class IntegrityIncidentPlanningTests(unittest.TestCase):
-    """Verify severe incidents survive time windows and clear only on new clean reports."""
+    """Verify severe incidents survive windows and clear only on clean reports."""
 
     def test_service_required_creates_latch(self) -> None:
         raw = assessment(
