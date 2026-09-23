@@ -293,7 +293,9 @@ class IntegrityIncidentStore:
             if not isinstance(device_id, str) or not isinstance(data, dict):
                 continue
             try:
-                self.records[device_id] = IntegrityIncidentRecord.from_storage_dict(data)
+                self.records[device_id] = (
+                    IntegrityIncidentRecord.from_storage_dict(data)
+                )
             except (TypeError, ValueError):
                 _LOGGER.warning("Ignoring invalid integrity incident for %s", device_id)
         self._dirty = False
