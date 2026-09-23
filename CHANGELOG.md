@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.1.0-rc.2
+
+Second release candidate focused on runtime telemetry integrity and safer service escalation.
+
+### Telemetry Integrity
+
+- Adds a cross-signal Telemetry Integrity layer before Health Model v2.
+- Classifies input telemetry as `trusted`, `guarded` or `service_required`.
+- Detects implausible diagnostic temperature sentinels, large `power_outage_count` jumps and abrupt battery-percentage collapse relative to the device's own history.
+- Tracks the largest positive outage-counter delta in the 24-hour evidence window so one corrupted counter jump cannot disappear inside an aggregate total.
+- Treats missing optional voltage, temperature or outage channels as unavailable evidence rather than as an integrity failure.
+
+### Service-oriented `replace`
+
+- Severe contradictory telemetry can now publish `replace` with `calculation: limited` and `basis: telemetry_integrity`.
+- In this path, `replace` means **battery service / physical inspection required**. It does not claim that every cell is mathematically proven exhausted.
+- This intentionally matches the operational workflow: inspect the device, measure individual cells and contacts, and replace only the weak or failed cell(s) when appropriate.
+- Isolated anomalies remain conservative and do not escalate directly to `replace`.
+
+### Persistence safety
+
+- Baseline-v2 persistence is blocked whenever telemetry integrity is not `trusted`.
+- Guarded or service-required telemetry cannot create, raise or otherwise contaminate the persisted battery baseline.
+- Existing persisted baseline records are retained unchanged while integrity is guarded.
+
+### Regression coverage
+
+- Adds a regression fixture for the real `Rad_E1_Adi_pokoj` anomaly:
+  - battery percentage 100% -> 0%;
+  - voltage remaining at 3100 mV;
+  - diagnostic temperature `-327.7 °C`;
+  - `power_outage_count` jump 5 -> 26655.
+- Adds coverage for isolated battery collapse, temperature sentinel, huge outage jump, missing optional channels and Health Model v2 integrity routing.
+- Keeps the four-state public health contract unchanged: `ok`, `declining`, `weakening`, `replace`.
+
+### Compatibility
+
+- No Store schema change.
+- No Health Model v2 threshold retuning.
+- No widening beyond MQTT integration discovery.
+- Home Assistant compatibility target remains 2026.9 or newer.
+
 ## 0.1.0-rc.1
 
 First release candidate of Battery Health Analyzer.
