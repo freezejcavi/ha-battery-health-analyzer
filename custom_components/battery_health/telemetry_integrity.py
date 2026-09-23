@@ -134,7 +134,10 @@ def assess_telemetry_integrity(
         if outage_huge_jump:
             findings.append("outage_counter_implausible_jump")
             if (
-                (recent_max_delta is None or recent_max_delta < OUTAGE_IMPLAUSIBLE_DELTA)
+                (
+                    recent_max_delta is None
+                    or recent_max_delta < OUTAGE_IMPLAUSIBLE_DELTA
+                )
                 and retained_max_delta is not None
                 and retained_max_delta >= OUTAGE_IMPLAUSIBLE_DELTA
             ):
