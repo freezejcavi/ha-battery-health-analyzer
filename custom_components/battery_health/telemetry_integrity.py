@@ -113,7 +113,16 @@ def assess_telemetry_integrity(
     outage_huge_jump = False
     outage_burst = False
     if outage is not None and outage.supported:
-        max_delta = outage.max_positive_delta_24h
+        recent_max_delta = outage.max_positive_delta_24h
+        retained_max_delta = outage.max_positive_delta_7d
+        max_delta = max(
+            (
+                value
+                for value in (recent_max_delta, retained_max_delta)
+                if value is not None
+            ),
+            default=None,
+        )
         outage_huge_jump = (
             max_delta is not None and max_delta >= OUTAGE_IMPLAUSIBLE_DELTA
         )
@@ -124,6 +133,12 @@ def assess_telemetry_integrity(
         )
         if outage_huge_jump:
             findings.append("outage_counter_implausible_jump")
+            if (
+                (recent_max_delta is None or recent_max_delta < OUTAGE_IMPLAUSIBLE_DELTA)
+                and retained_max_delta is not None
+                and retained_max_delta >= OUTAGE_IMPLAUSIBLE_DELTA
+            ):
+                findings.append("outage_counter_jump_retained_7d")
             outage_trust = "rejected"
         elif outage_burst:
             findings.append("outage_counter_burst")
