@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.1.0-rc.3
+
+Third release candidate focused on persistence and recovery of severe telemetry-integrity incidents.
+
+### Persistent integrity incident latch
+
+- Severe `service_required` findings are now persisted in a dedicated compact Home Assistant Store.
+- Once latched, the public health state remains `replace` even after the original anomaly leaves the rolling 24-hour analysis window.
+- Repeated analysis of the same stale `last_seen` cannot advance recovery.
+- Baseline-v2 persistence remains blocked for the full lifetime of an active integrity incident.
+
+### Seven-day outage bootstrap
+
+- Recorder outage-counter history is queried across a seven-day incident lookback while normal operational outage totals remain 24-hour evidence.
+- The largest positive outage-counter delta is retained for both 24-hour and seven-day windows.
+- A recent RC3 installation can therefore bootstrap an incident that occurred before installation, including the validated `Rad_E1_Adi_pokoj` case where `power_outage_count` jumped from 5 to 26655.
+
+### Recovery semantics
+
+- An active incident clears only after **3 distinct newer clean device reports**.
+- A new report with a current integrity problem resets the recovery streak.
+- The historical seven-day outage marker by itself is tolerated during recovery, so a physically serviced device does not remain latched merely because the original outage anomaly is still present in the bootstrap lookback.
+- If the device stops reporting, the incident remains latched instead of aging away.
+
+### Diagnostics and regression coverage
+
+- Deep diagnostics expose the active incident record, recovery progress and latest incident transition.
+- Added tests for stale-report non-recovery, three-report recovery, recovery reset, Store round-trip, and retained seven-day outage escalation.
+- Public health states remain unchanged: `ok`, `declining`, `weakening`, `replace`.
+
+### Compatibility
+
+- Adds a new independent Store key for active integrity incidents; existing baseline Store schemas are unchanged.
+- Health Model v2 thresholds, MQTT-only discovery scope and public entity IDs remain unchanged.
+- Home Assistant compatibility target remains 2026.9 or newer.
+
 ## 0.1.0-rc.2
 
 Second release candidate focused on runtime telemetry integrity and safer service escalation.
