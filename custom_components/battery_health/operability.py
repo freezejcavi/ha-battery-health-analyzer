@@ -89,6 +89,8 @@ class OutageEvidence:
     history_rows: int
     valid_rows: int
     issue: str | None = None
+    max_positive_delta_24h: int | None = None
+    max_positive_delta_at: datetime | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return compact diagnostics for the HA state attribute."""
@@ -100,6 +102,12 @@ class OutageEvidence:
             "resets_24h": self.resets_24h,
             "history_rows": self.history_rows,
             "valid_rows": self.valid_rows,
+            "max_positive_delta_24h": self.max_positive_delta_24h,
+            "max_positive_delta_at": (
+                self.max_positive_delta_at.isoformat()
+                if self.max_positive_delta_at is not None
+                else None
+            ),
             "issue": self.issue,
         }
 
@@ -356,6 +364,8 @@ def summarize_outage_history(
     events = 0
     increment_transitions = 0
     resets = 0
+    max_positive_delta: int | None = None
+    max_positive_delta_at: datetime | None = None
     for point in relevant:
         if (
             previous is not None
@@ -366,6 +376,9 @@ def summarize_outage_history(
             if delta > 0:
                 events += delta
                 increment_transitions += 1
+                if max_positive_delta is None or delta > max_positive_delta:
+                    max_positive_delta = delta
+                    max_positive_delta_at = point.timestamp
             elif delta < 0:
                 resets += 1
         previous = point
@@ -383,4 +396,6 @@ def summarize_outage_history(
         history_rows=len(deduplicated),
         valid_rows=len(valid),
         issue=issue,
+        max_positive_delta_24h=max_positive_delta,
+        max_positive_delta_at=max_positive_delta_at,
     )
