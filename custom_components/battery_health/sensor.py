@@ -80,6 +80,9 @@ _LIMITATION_NOTES = {
     "evidence_not_fully_ready": "Supporting evidence is limited",
     "low_current_voltage_coverage": "Current voltage history coverage is limited",
     "low_current_battery_coverage": "Current battery history coverage is limited",
+    "telemetry_integrity_guarded": (
+        "Telemetry is inconsistent and the result is intentionally conservative"
+    ),
 }
 
 
@@ -177,6 +180,16 @@ def _public_health_attributes(assessment) -> dict[str, Any]:
             "calculation": "unavailable",
             "basis": "unavailable",
             "reason": "No usable battery telemetry",
+        }
+
+    if assessment.assessment_mode == "telemetry_integrity":
+        return {
+            "trend": assessment.trend_state,
+            "confidence_percent": round(assessment.confidence * 100),
+            "calculation": assessment.calculation_state,
+            "basis": "telemetry_integrity",
+            "reason": "Battery or power telemetry requires physical inspection",
+            "note": "Conflicting or implausible device telemetry was detected",
         }
 
     is_voltage = assessment.signal == "voltage_mv"
@@ -493,6 +506,11 @@ class BatteryHealthDiscoverySensor(
             "insufficient": 0,
         }
         persistence_counts: dict[str, int] = {}
+        telemetry_integrity_counts = {
+            "trusted": 0,
+            "guarded": 0,
+            "service_required": 0,
+        }
         health_v2_conditions = {state: 0 for state in V2_CONDITION_STATES}
         health_v2_calculation = {state: 0 for state in V2_CALCULATION_STATES}
         health_v2_trends = {state: 0 for state in V2_TREND_STATES}
@@ -578,6 +596,16 @@ class BatteryHealthDiscoverySensor(
             diagnostics["telemetry_profile"] = (
                 profile.as_dict() if profile is not None else None
             )
+
+            integrity = self.coordinator.telemetry_integrity.get(device.device_id)
+            diagnostics["telemetry_integrity"] = (
+                integrity.as_dict() if integrity is not None else None
+            )
+            if (
+                integrity is not None
+                and integrity.state in telemetry_integrity_counts
+            ):
+                telemetry_integrity_counts[integrity.state] += 1
 
             evidence_model = self.coordinator.evidence_models.get(device.device_id)
             diagnostics["evidence_model"] = (
@@ -723,6 +751,7 @@ class BatteryHealthDiscoverySensor(
             "power_outage_events_24h_total": sum(
                 evidence.events_24h or 0 for evidence in operability.outages.values()
             ),
+            "telemetry_integrity": telemetry_integrity_counts,
             "evidence_readiness": evidence_readiness,
             "cycle_integrity": cycle_integrity_counts,
             "baseline_v2_eligibility": baseline_v2_counts,
