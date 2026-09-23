@@ -8,12 +8,12 @@ The integration is intentionally limited to battery devices provided by Home Ass
 
 ## Release status
 
-**Current release candidate: `0.1.0-rc.2`**
+**Current release candidate: `0.1.0-rc.3`**
 
-RC2 keeps the accepted Health Model v2 thresholds, Store schema, MQTT scope and
-freshness/cycle semantics, while adding a cross-signal **Telemetry Integrity** layer.
-That layer detects contradictory or implausible runtime telemetry before it can contaminate
-baseline learning or produce a misleading battery-condition verdict.
+RC3 keeps the accepted Health Model v2 thresholds, MQTT scope and freshness/cycle
+semantics while making severe **Telemetry Integrity** incidents persistent. A severe
+incident can no longer disappear merely because its original outage-counter anomaly aged
+out of the rolling 24-hour window.
 
 The pre-RC contract was validated on a real Home Assistant installation with 31 MQTT
 battery devices. The accepted snapshot contained:
@@ -158,6 +158,13 @@ only the weak or failed cell(s) replaced when appropriate.
 Guarded and service-required telemetry cannot create or update the persisted baseline-v2
 record, so one corrupted report cannot teach the model a bad reference.
 
+Severe `service_required` incidents are persisted independently. Recorder keeps a seven-day
+outage bootstrap window so a recent anomaly can still be detected after installation or
+restart. Once latched, `replace` remains active until three distinct newer clean device
+reports prove recovery. Re-evaluating the same stale report never advances recovery, and a
+new report that is still inconsistent resets the clean-report streak. The retained
+historical outage marker is tolerated during recovery once all current telemetry is clean.
+
 ### Evidence Routing
 
 Evidence Routing decides how each telemetry channel may be used. It prevents strongly
@@ -195,7 +202,7 @@ is the sole safe candidate.
 Temperature-sensitive voltage paths may remain calculable but are marked `limited`, or the
 model may bypass voltage and use battery percentage when that is safer.
 
-Full temperature normalization is not part of RC2.
+Full temperature normalization is not part of RC3.
 
 ## Deep diagnostics
 
@@ -231,7 +238,7 @@ The health verdict itself is derived and is not stored separately.
 The older dev7/dev8 baseline Store remains read-only and provisional for diagnostics. It does
 not feed the production Health Model v2.
 
-## Known limitations of RC2
+## Known limitations of RC3
 
 - MQTT integration only; Zigbee2MQTT is the primary validated environment.
 - Thresholds are conservative calibration hypotheses, not chemistry-specific battery models.
@@ -267,7 +274,7 @@ python -m unittest discover -s tests -v
 
 Separate validation jobs run Home Assistant Hassfest and HACS validation.
 
-The RC2 development head passed repository compile, full Ruff, the complete unit-test suite,
+The RC3 development head passed repository compile, full Ruff, the complete unit-test suite,
 Hassfest and HACS validation before release preparation.
 
 ## Compatibility target
