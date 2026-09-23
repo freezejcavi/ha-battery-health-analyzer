@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -46,7 +47,12 @@ from .recorder import (
     async_get_long_term_history,
     async_get_recorder_history,
 )
+from .statistics import normalize_temperature_c
 from .storage import BaselineStore
+from .telemetry_integrity import (
+    TelemetryIntegrityAssessment,
+    assess_telemetry_integrity,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +100,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.baseline_v2_assessments: dict[str, BaselineV2Assessment] = {}
         self.baseline_v2_persistence: dict[str, BaselineV2PersistenceResult] = {}
         self.health_v2_assessments: dict[str, RelativeHealthAssessment] = {}
+        self.telemetry_integrity: dict[str, TelemetryIntegrityAssessment] = {}
 
     @property
     def baseline_v2_records(self) -> dict[str, BaselineV2Record]:
@@ -150,6 +157,25 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             if device.outage_entity_id is not None
             else None
         )
+        current_temperature_c = None
+        if device.temperature_entity_id is not None:
+            temperature_state = self.hass.states.get(device.temperature_entity_id)
+            if temperature_state is not None:
+                current_temperature_c = normalize_temperature_c(
+                    temperature_state.state,
+                    temperature_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT),
+                )
+
+        integrity = assess_telemetry_integrity(
+            battery_history,
+            voltage_history,
+            battery_daily,
+            voltage_daily,
+            outage,
+            current_temperature_c,
+        )
+        self.telemetry_integrity[device.device_id] = integrity
+
         voltage_information = classify_voltage_information(voltage_daily)
         evidence_model = build_evidence_model(
             profile,
@@ -183,11 +209,23 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
 
         persistence: BaselineV2PersistenceResult | None = None
         if persist:
-            persistence = self._baseline_v2_store.apply(
-                device.device_id,
-                assessment,
-                observed_at,
-            )
+            if integrity.state == "trusted":
+                persistence = self._baseline_v2_store.apply(
+                    device.device_id,
+                    assessment,
+                    observed_at,
+                )
+            else:
+                existing = self._baseline_v2_store.records.get(device.device_id)
+                persistence = BaselineV2PersistenceResult(
+                    existing,
+                    (
+                        "retained_integrity_guard"
+                        if existing is not None
+                        else "not_persisted_integrity_guard"
+                    ),
+                    False,
+                )
             self.baseline_v2_persistence[device.device_id] = persistence
 
         persisted_record = self._baseline_v2_store.records.get(device.device_id)
@@ -211,6 +249,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
             assessment,
             persisted_baseline_mv=persisted_mv,
             persisted_baseline_confidence=persisted_confidence,
+            integrity=integrity,
         )
         return persistence
 
@@ -465,6 +504,7 @@ class BatteryHealthCoordinator(DataUpdateCoordinator[BatteryHealthSnapshot]):
         self.baseline_v2_assessments = {}
         self.baseline_v2_persistence = {}
         self.health_v2_assessments = {}
+        self.telemetry_integrity = {}
         for device in devices:
             profile = telemetry_profiles.get(device.device_id)
             if profile is None:
