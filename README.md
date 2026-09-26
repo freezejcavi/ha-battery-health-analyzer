@@ -8,15 +8,14 @@ The integration is intentionally limited to battery devices provided by Home Ass
 
 ## Release status
 
-**Current release candidate: `0.1.0-rc.3`**
+**Current stable release: `0.1.0`**
 
-RC3 keeps the accepted Health Model v2 thresholds, MQTT scope and freshness/cycle
-semantics while making severe **Telemetry Integrity** incidents persistent. A severe
-incident can no longer disappear merely because its original outage-counter anomaly aged
-out of the rolling 24-hour window.
+Stable 0.1.0 promotes the accepted RC3 runtime contract unchanged. It keeps the Health
+Model v2 thresholds, MQTT scope, freshness/cycle semantics and persistent **Telemetry
+Integrity** incident handling validated during the release-candidate phase.
 
-The pre-RC contract was validated on a real Home Assistant installation with 31 MQTT
-battery devices. The accepted snapshot contained:
+The production contract was validated on a real Home Assistant installation with 31 MQTT
+battery devices. The accepted pre-RC snapshot contained:
 
 - 25 `ok`
 - 5 `declining`
@@ -202,7 +201,7 @@ is the sole safe candidate.
 Temperature-sensitive voltage paths may remain calculable but are marked `limited`, or the
 model may bypass voltage and use battery percentage when that is safer.
 
-Full temperature normalization is not part of RC3.
+Full temperature normalization is not part of 0.1.0.
 
 ## Deep diagnostics
 
@@ -223,7 +222,7 @@ deep payload contains canonical production diagnostics such as:
 - `health_thresholds`
 - full per-device discovery, telemetry, evidence, cycle and baseline diagnostics
 
-Temporary legacy/shadow parity aliases were removed before RC1 and remain absent in RC2.
+Temporary legacy/shadow parity aliases were removed before RC1 and remain absent in 0.1.0.
 
 ## Persistence
 
@@ -231,14 +230,15 @@ Battery Health Analyzer persists only learned state that cannot be safely recons
 a single current Recorder window:
 
 - time-balanced `last_seen` cadence samples;
-- guarded baseline-v2 / cycle state.
+- guarded baseline-v2 / cycle state;
+- active severe telemetry-integrity incidents and recovery progress.
 
 The health verdict itself is derived and is not stored separately.
 
 The older dev7/dev8 baseline Store remains read-only and provisional for diagnostics. It does
 not feed the production Health Model v2.
 
-## Known limitations of RC3
+## Known limitations of 0.1.0
 
 - MQTT integration only; Zigbee2MQTT is the primary validated environment.
 - Thresholds are conservative calibration hypotheses, not chemistry-specific battery models.
@@ -274,8 +274,8 @@ python -m unittest discover -s tests -v
 
 Separate validation jobs run Home Assistant Hassfest and HACS validation.
 
-The RC3 development head passed repository compile, full Ruff, the complete unit-test suite,
-Hassfest and HACS validation before release preparation.
+The accepted RC3 release head passed repository compile, full Ruff, **158/158 unit tests**,
+Hassfest and HACS validation before promotion to stable 0.1.0.
 
 ## Compatibility target
 
