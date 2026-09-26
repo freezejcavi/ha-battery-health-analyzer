@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.1.0
+
+First stable release of Battery Health Analyzer. This release promotes the accepted
+`0.1.0-rc.3` behavior without changing runtime semantics.
+
+### Stable acceptance
+
+- The RC3 telemetry-integrity persistence and recovery behavior was accepted in the
+  real Home Assistant validation installation without known operational issues.
+- Release-candidate CI passed repository compile, full Ruff and **158/158 unit tests**,
+  with Hassfest and HACS validation also green.
+- No Health Model v2 threshold retuning was introduced for stable.
+
+### Stable contract
+
+- Production battery-health states remain `ok`, `declining`, `weakening` and
+  `replace`.
+- Source-derived public health entity IDs and stable unique IDs are unchanged.
+- Severe telemetry-integrity incidents remain persistently latched across rolling
+  analysis windows and restarts until recovery is proven by three distinct newer clean
+  device reports.
+- Guarded baseline-v2 persistence, adaptive freshness, cycle integrity, temperature
+  context guards and MQTT-only discovery remain unchanged from RC3.
+- Deep legacy/shadow runtime branches remain removed.
+
+### Compatibility
+
+- Home Assistant compatibility target remains 2026.9 or newer.
+- Existing cadence, baseline-v2 and integrity-incident Store formats are unchanged.
+- Stable 0.1.0 introduces no entity-ID migration, health-threshold change or feature
+  expansion beyond the accepted RC3 public contract.
+
 ## 0.1.0-rc.3
 
 Third release candidate focused on persistence and recovery of severe telemetry-integrity incidents.
