@@ -10,6 +10,8 @@ from custom_components.battery_health.ha_discovery import async_discover_battery
 from custom_components.battery_health.sensor import (
     BatteryHealthDeviceSensor,
     _orphaned_health_entity_ids,
+    _registered_device_ids,
+    _cleanup_orphaned_health_entities,
 )
 
 
@@ -30,6 +32,50 @@ def _entry(
 
 class EntityLifecycleTests(unittest.TestCase):
     """Remove proven orphans without deleting working or temporarily offline devices."""
+
+    def test_ha_device_registry_yields_objects_not_string_ids(self) -> None:
+        """Regression: set(registry.devices) used to crash platform setup."""
+        registry = SimpleNamespace(
+            devices=[
+                SimpleNamespace(id="active"),
+                SimpleNamespace(id="offline"),
+            ]
+        )
+        self.assertEqual(_registered_device_ids(registry), {"active", "offline"})
+
+    def test_real_registry_cleanup_retains_valid_devices(self) -> None:
+        """Exercise the registration adapter rather than prebuilt ID sets."""
+        from unittest.mock import Mock
+
+        entries = [
+            _entry("config123_removed_health", "sensor.removed_health"),
+            _entry("config123_active_health", "sensor.active_health"),
+            _entry("config123_offline_health", "sensor.offline_health"),
+        ]
+        entity_registry = SimpleNamespace(async_remove=Mock())
+        device_registry = SimpleNamespace(
+            devices=[SimpleNamespace(id="active"), SimpleNamespace(id="offline")]
+        )
+        with (
+            patch(
+                "custom_components.battery_health.sensor.er.async_get",
+                return_value=entity_registry,
+            ),
+            patch(
+                "custom_components.battery_health.sensor.er.async_entries_for_config_entry",
+                return_value=entries,
+            ),
+            patch(
+                "custom_components.battery_health.sensor.dr.async_get",
+                return_value=device_registry,
+            ),
+        ):
+            _cleanup_orphaned_health_entities(
+                object(),
+                SimpleNamespace(entry_id="config123"),
+                [SimpleNamespace(device_id="active")],
+            )
+        entity_registry.async_remove.assert_called_once_with("sensor.removed_health")
 
     def test_removed_source_is_orphaned_even_when_health_id_was_customized(
         self,
