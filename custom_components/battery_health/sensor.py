@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
@@ -171,6 +173,54 @@ def _migrate_health_entity_ids(
     )
 
 
+def _orphaned_health_entity_ids(
+    registry_entries: Iterable[er.RegistryEntry],
+    config_entry_id: str,
+    discovered_device_ids: set[str],
+    registered_device_ids: set[str],
+) -> list[str]:
+    """Select only our health sensors whose source device was truly removed."""
+    prefix = f"{config_entry_id}_"
+    suffix = "_health"
+    orphaned: list[str] = []
+
+    for registry_entry in registry_entries:
+        if registry_entry.domain != "sensor" or registry_entry.platform != DOMAIN:
+            continue
+        unique_id = registry_entry.unique_id
+        if not unique_id.startswith(prefix) or not unique_id.endswith(suffix):
+            continue
+
+        source_device_id = unique_id[len(prefix) : -len(suffix)]
+        if (
+            source_device_id
+            and source_device_id not in discovered_device_ids
+            and source_device_id not in registered_device_ids
+        ):
+            orphaned.append(registry_entry.entity_id)
+
+    return orphaned
+
+
+@callback
+def _cleanup_orphaned_health_entities(
+    hass: HomeAssistant, entry: ConfigEntry, devices
+) -> None:
+    """Remove stale registry entries but retain all baseline and history stores."""
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    orphaned = _orphaned_health_entity_ids(
+        er.async_entries_for_config_entry(entity_registry, entry.entry_id),
+        entry.entry_id,
+        {device.device_id for device in devices},
+        set(device_registry.devices),
+    )
+
+    for entity_id in orphaned:
+        entity_registry.async_remove(entity_id)
+        _LOGGER.info("Removed orphaned Battery Health entity %s", entity_id)
+
+
 def _public_health_attributes(assessment) -> dict[str, Any]:
     """Return the compact user-facing explanation for one health state."""
     if assessment is None or assessment.condition_state not in V2_CONDITION_STATES:
@@ -255,6 +305,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up diagnostic, summary and per-device health sensors."""
     coordinator: BatteryHealthCoordinator = entry.runtime_data
+    _cleanup_orphaned_health_entities(hass, entry, coordinator.data.devices)
     _migrate_health_entity_ids(hass, entry, coordinator.data.devices)
     known_device_ids = {device.device_id for device in coordinator.data.devices}
 
@@ -276,8 +327,13 @@ async def async_setup_entry(
     )
 
     @callback
-    def _add_new_health_entities() -> None:
-        """Create entities for MQTT battery devices discovered after setup."""
+    def _reconcile_health_entities() -> None:
+        """Add newly discovered devices and prune confirmed removed sources."""
+        _cleanup_orphaned_health_entities(hass, entry, coordinator.data.devices)
+        discovered_ids = {device.device_id for device in coordinator.data.devices}
+        registered_ids = set(dr.async_get(hass).devices)
+        known_device_ids.intersection_update(discovered_ids | registered_ids)
+
         new_entities: list[BatteryHealthDeviceSensor] = []
         for device in coordinator.data.devices:
             if device.device_id in known_device_ids:
@@ -295,7 +351,7 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    entry.async_on_unload(coordinator.async_add_listener(_add_new_health_entities))
+    entry.async_on_unload(coordinator.async_add_listener(_reconcile_health_entities))
 
 
 class BatteryHealthDeviceSensor(
@@ -335,6 +391,14 @@ class BatteryHealthDeviceSensor(
             ),
             None,
         )
+
+    @property
+    def name(self) -> str:
+        """Follow source device display-name changes without replacing the entity."""
+        device = self._device()
+        if device is not None and device.device_name:
+            return f"{device.device_name} Battery health"
+        return self._attr_name
 
     @property
     def available(self) -> bool:
