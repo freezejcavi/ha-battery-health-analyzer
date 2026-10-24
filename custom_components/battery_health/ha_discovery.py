@@ -27,6 +27,9 @@ def async_discover_battery_devices(
             continue
 
         device_entry = device_registry.async_get(registry_entry.device_id)
+        if device_entry is None:
+            # MQTT registry remnants are not valid devices after device removal.
+            continue
         device_disabled = bool(
             device_entry is not None
             and getattr(device_entry, "disabled_by", None) is not None
