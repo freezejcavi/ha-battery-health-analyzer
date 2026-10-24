@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from custom_components.battery_health.ha_discovery import async_discover_battery_devices
 from custom_components.battery_health.sensor import (
     BatteryHealthDeviceSensor,
+    _cleanup_orphaned_health_entities,
     _orphaned_health_entity_ids,
     _registered_device_ids,
-    _cleanup_orphaned_health_entities,
 )
 
 
@@ -45,8 +45,6 @@ class EntityLifecycleTests(unittest.TestCase):
 
     def test_real_registry_cleanup_retains_valid_devices(self) -> None:
         """Exercise the registration adapter rather than prebuilt ID sets."""
-        from unittest.mock import Mock
-
         entries = [
             _entry("config123_removed_health", "sensor.removed_health"),
             _entry("config123_active_health", "sensor.active_health"),
