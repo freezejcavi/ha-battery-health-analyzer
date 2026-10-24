@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
+from custom_components.battery_health.ha_discovery import async_discover_battery_devices
 from custom_components.battery_health.sensor import (
     BatteryHealthDeviceSensor,
     _orphaned_health_entity_ids,
@@ -85,6 +87,24 @@ class EntityLifecycleTests(unittest.TestCase):
             ),
             ["sensor.removed_health"],
         )
+
+    def test_mqtt_entity_without_device_registry_record_is_not_discovered(
+        self,
+    ) -> None:
+        mqtt_entry = SimpleNamespace(device_id="deleted", platform="mqtt")
+        entities = SimpleNamespace(entities={"sensor.ghost_battery": mqtt_entry})
+        devices = SimpleNamespace(async_get=lambda _device_id: None)
+        with (
+            patch(
+                "custom_components.battery_health.ha_discovery.er.async_get",
+                return_value=entities,
+            ),
+            patch(
+                "custom_components.battery_health.ha_discovery.dr.async_get",
+                return_value=devices,
+            ),
+        ):
+            self.assertEqual(async_discover_battery_devices(object()), [])
 
     def test_device_name_updates_without_changing_identity(self) -> None:
         sensor = object.__new__(BatteryHealthDeviceSensor)
