@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1
+
+Maintenance patch for lifecycle reconciliation of MQTT battery-health sensors.
+
+- Remove integration-owned health entities when their source HA device has been
+  removed from Device Registry. This also cleans up pre-existing orphaned entries
+  during integration setup.
+- Keep health entities and their user-customized IDs when the source device is
+  still registered but its telemetry is temporarily unavailable or no longer
+  eligible for discovery.
+- Add new entities when a source is discovered again after a genuine removal.
+- Reflect same-device MQTT display-name changes in the health sensor name while
+  preserving the sensor's stable unique ID and existing entity ID.
+- Preserve baseline, cadence and integrity stores; never purge history as part
+  of orphan cleanup. If HA recreates a source with a different device-registry
+  ID, its new sensor is treated as a new identity rather than silently merging
+  potentially unrelated battery histories.
+- Add focused regression tests for entity lifecycle safety. No change to
+  Health Model v2 thresholds or summary behavior.
+
 ## 0.1.0
 
 First stable release of Battery Health Analyzer. This release promotes the accepted
