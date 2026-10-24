@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.2
+
+Hotfix for the 0.1.1 sensor-platform setup regression.
+
+- Read source device IDs from HA `DeviceEntry.id` values rather than attempting
+  `set(device_registry.devices)`, which iterates DeviceEntry objects and can
+  raise during setup. This impacted all health sensors after the 0.1.1 update.
+- Use the corrected ID set in both startup orphan cleanup and refresh-time
+  discovered-device bookkeeping.
+- Add integration-level regression coverage for actual registry-style iterable
+  objects, ensuring existing and temporarily undiscovered devices are retained.
+- Validate against Home Assistant 2026.9.4 **and** 2026.10.3 in CI.
+- Preserve source identity, baselines, health thresholds and public sensor IDs.
+  As in 0.1.1, cleanup removes only proven orphan health registry entries.
+
 ## 0.1.1
 
 Maintenance patch for lifecycle reconciliation of MQTT battery-health sensors.
