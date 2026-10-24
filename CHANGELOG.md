@@ -7,6 +7,8 @@ Maintenance patch for lifecycle reconciliation of MQTT battery-health sensors.
 - Remove integration-owned health entities when their source HA device has been
   removed from Device Registry. This also cleans up pre-existing orphaned entries
   during integration setup.
+- Ignore stale MQTT Entity Registry records whose source device no longer exists
+  in Device Registry, so such remnants cannot prevent orphan cleanup.
 - Keep health entities and their user-customized IDs when the source device is
   still registered but its telemetry is temporarily unavailable or no longer
   eligible for discovery.
