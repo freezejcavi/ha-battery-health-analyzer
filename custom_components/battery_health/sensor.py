@@ -173,6 +173,11 @@ def _migrate_health_entity_ids(
     )
 
 
+def _registered_device_ids(registry: dr.DeviceRegistry) -> set[str]:
+    """Read source IDs from DeviceEntry objects, never hash registry entries."""
+    return {device.id for device in registry.devices}
+
+
 def _orphaned_health_entity_ids(
     registry_entries: Iterable[er.RegistryEntry],
     config_entry_id: str,
@@ -213,7 +218,7 @@ def _cleanup_orphaned_health_entities(
         er.async_entries_for_config_entry(entity_registry, entry.entry_id),
         entry.entry_id,
         {device.device_id for device in devices},
-        set(device_registry.devices),
+        _registered_device_ids(device_registry),
     )
 
     for entity_id in orphaned:
@@ -331,7 +336,7 @@ async def async_setup_entry(
         """Add newly discovered devices and prune confirmed removed sources."""
         _cleanup_orphaned_health_entities(hass, entry, coordinator.data.devices)
         discovered_ids = {device.device_id for device in coordinator.data.devices}
-        registered_ids = set(dr.async_get(hass).devices)
+        registered_ids = _registered_device_ids(dr.async_get(hass))
         known_device_ids.intersection_update(discovered_ids | registered_ids)
 
         new_entities: list[BatteryHealthDeviceSensor] = []
